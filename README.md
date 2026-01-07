@@ -1,135 +1,392 @@
-# 🛰️ EcoSight AI — Environmental Waste Detection from Space
+# 🌊 Marine Debris Early Warning System
 
-> **Presidential AI Challenge Entry** — Leveraging satellite imagery to detect illegal dumping and environmental waste accumulation.
+**AI-powered satellite imagery analysis for detecting offshore marine debris accumulation zones.**
 
-![NEON + Earth Engine](https://img.shields.io/badge/NEON-Airborne_Platform-00A86B?style=flat-square)
-![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript)
-![Roboflow](https://img.shields.io/badge/Roboflow-ML_Inference-6706CE?style=flat-square)
+*Presidential AI Challenge Submission*
 
-## 🎯 Overview
+---
 
-EcoSight AI uses **0.1-meter resolution satellite imagery** from NEON's Airborne Observation Platform to identify:
+## 🎯 What This Does
 
-- 🗑️ Illegal dumping sites
-- 🏭 Landfill overflow
-- 🌊 Debris accumulation in natural areas
+This system automatically detects marine debris (plastics, waste) floating in ocean waters using free Sentinel-2 satellite imagery. It produces:
 
-The system enables rapid environmental response by automatically detecting and classifying waste materials from aerial imagery.
+- **Heatmaps** showing debris probability across ocean areas
+- **Ranked hotspot lists** with GPS coordinates for cleanup prioritization  
+- **GIS-ready outputs** (GeoTIFF, GeoJSON) for integration with mapping tools
 
-## ✨ Features
+---
 
-- **Live Waste Detection** — Upload satellite/aerial images for instant AI analysis
-- **Multiple Detection Models** — Switch between waste, materials, and environmental classifiers
-- **Interactive Map** — Visualize detection locations across 81 NEON monitoring sites
-- **Confidence Scoring** — See detection confidence and severity ratings
-- **Area Estimation** — Approximate affected area in m², hectares, or km²
+## 🖥️ System Requirements
 
-## 🚀 Quick Start
+This project is optimized for **Apple Silicon (M4 Max)** but works on any system:
 
-### Prerequisites
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| Python | 3.10+ | 3.11 |
+| RAM | 16GB | 32GB+ |
+| Storage | 20GB | 50GB+ |
+| GPU | None (CPU works) | Apple M4 Max / NVIDIA GPU |
 
-- Node.js 18+
-- npm or yarn
+---
 
-### Installation
+## 🚀 Quick Start (5 Minutes)
 
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/PresidentialAI.git
-cd PresidentialAI
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-The app will be running at `http://localhost:5173`
-
-### Build for Production
+### Step 1: Clone and Setup
 
 ```bash
-npm run build
-npm run preview
+# Clone your repository
+git clone https://github.com/YOUR_USERNAME/marine-debris-detection.git
+cd marine-debris-detection
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies (optimized for Apple Silicon)
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Install the package
+pip install -e .
 ```
 
-## 🔑 API Configuration
+### Step 2: Download Training Data
 
-EcoSight AI uses [Roboflow](https://roboflow.com) for waste detection inference. A demo API key is pre-configured for testing.
+```bash
+# Download MARIDA dataset (~2GB)
+python scripts/download_marida.py
+```
 
-To use your own API key:
+### Step 3: Train the Model
 
-1. Create a free account at [roboflow.com](https://roboflow.com)
-2. Get your API key from Settings → API Keys
-3. Either:
-   - Enter it in the app's API Key input field, or
-   - Set the environment variable:
-     ```bash
-     VITE_ROBOFLOW_API_KEY=your_api_key_here
-     ```
+```bash
+# Train with default settings (uses MPS on M4 Max automatically)
+python scripts/train.py
 
-## 🏗️ Tech Stack
+# Or with custom settings
+python scripts/train.py --epochs 50 --batch-size 8
+```
 
-| Technology | Purpose |
-|------------|---------|
-| **React 18** | UI Framework |
-| **TypeScript** | Type Safety |
-| **Vite** | Build Tool |
-| **Roboflow** | ML Inference API |
-| **Leaflet** | Interactive Maps |
-| **Framer Motion** | Animations |
-| **Recharts** | Analytics Charts |
+### Step 4: Run Detection on New Imagery
+
+```bash
+# Run inference on a Sentinel-2 image
+python scripts/predict.py --input path/to/sentinel2_image.tif --output outputs/
+
+# Run on sample data (included)
+python scripts/predict.py --demo
+```
+
+---
 
 ## 📁 Project Structure
 
 ```
-src/
-├── components/       # Reusable UI components
-│   ├── Header.tsx
-│   ├── Hero.tsx
-│   ├── ImageUpload.tsx
-│   ├── DetectionOverlay.tsx
-│   ├── ResultsCard.tsx
-│   ├── Map.tsx
-│   └── ...
-├── pages/
-│   ├── Home.tsx      # Landing page
-│   └── Demo.tsx      # Live detection demo
-├── services/
-│   └── roboflow.ts   # ML inference integration
-├── styles/
-│   └── globals.css   # Global styles
-└── types/
-    └── index.ts      # TypeScript definitions
+marine-debris-detection/
+├── README.md                 # You are here
+├── requirements.txt          # Python dependencies
+├── setup.py                  # Package installation
+├── config.yaml              # Main configuration
+│
+├── src/                     # Source code
+│   ├── __init__.py
+│   ├── data/               # Data loading & preprocessing
+│   │   ├── __init__.py
+│   │   ├── dataset.py      # PyTorch dataset
+│   │   ├── preprocessing.py # Image preprocessing
+│   │   └── download.py     # Data download utilities
+│   │
+│   ├── models/             # Neural network models
+│   │   ├── __init__.py
+│   │   └── segformer.py    # SegFormer for multispectral
+│   │
+│   ├── training/           # Training utilities
+│   │   ├── __init__.py
+│   │   ├── trainer.py      # Training loop
+│   │   ├── losses.py       # Loss functions
+│   │   └── metrics.py      # Evaluation metrics
+│   │
+│   ├── inference/          # Prediction pipeline
+│   │   ├── __init__.py
+│   │   └── predictor.py    # Inference engine
+│   │
+│   └── utils/              # Utilities
+│       ├── __init__.py
+│       ├── geo.py          # Geospatial utilities
+│       └── visualization.py # Plotting functions
+│
+├── scripts/                 # Entry point scripts
+│   ├── download_marida.py  # Download training data
+│   ├── train.py            # Train the model
+│   ├── predict.py          # Run inference
+│   └── evaluate.py         # Evaluate model
+│
+├── data/                    # Data directory (created automatically)
+│   ├── marida/             # MARIDA dataset
+│   └── raw/                # Raw Sentinel-2 scenes
+│
+├── outputs/                 # Output directory
+│   ├── models/             # Saved model weights
+│   ├── predictions/        # Prediction outputs
+│   └── logs/               # Training logs
+│
+└── notebooks/              # Jupyter notebooks
+    └── exploration.ipynb   # Data exploration
 ```
-
-## 🌍 Data Sources
-
-- **NEON Airborne Observation Platform** — 0.1m resolution imagery across 81 field sites
-- **Google Earth Engine** — Additional satellite data processing
-- **Roboflow Universe** — Pre-trained waste detection models
-
-## 📊 Detection Accuracy
-
-| Metric | Value |
-|--------|-------|
-| Resolution | 0.1 meters/pixel |
-| NEON Sites | 81 field locations |
-| Detection Accuracy | ~95% |
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📄 License
-
-MIT License — feel free to use this project for your own environmental monitoring applications.
 
 ---
 
-<p align="center">
-  Built for the <strong>Presidential AI Challenge</strong> 🇺🇸
-</p>
+## 📊 Data
 
+### MARIDA Dataset
+
+We use the [MARIDA](https://github.com/marine-debris/marine-debris.github.io) (Marine Debris Archive) dataset:
+
+- **Source**: Sentinel-2 multispectral satellite imagery
+- **Annotations**: Pixel-level semantic labels
+- **Classes**: Marine Debris, Sargassum, Ships, Foam, Water types, etc.
+- **Size**: ~2GB
+
+### Sentinel-2 Bands Used
+
+| Band | Name | Resolution | Use |
+|------|------|------------|-----|
+| B2 | Blue | 10m | Water penetration |
+| B3 | Green | 10m | Debris detection |
+| B4 | Red | 10m | Debris detection |
+| B8 | NIR | 10m | Vegetation/debris separation |
+| B11 | SWIR1 | 20m | Material discrimination |
+| B12 | SWIR2 | 20m | Material discrimination |
+
+---
+
+## 🧠 Model Architecture
+
+**SegFormer-B2** adapted for 6-band multispectral input:
+
+```
+Input (6 bands) → Patch Embedding → Mix Transformer Encoder → MLP Decoder → Output (2 classes)
+```
+
+Key modifications:
+- First convolution layer accepts 6 channels instead of 3
+- Pretrained weights loaded for all other layers
+- Binary output: debris vs. non-debris
+
+---
+
+## ⚙️ Configuration
+
+Edit `config.yaml` to customize:
+
+```yaml
+# Model settings
+model:
+  backbone: "mit_b2"          # SegFormer variant
+  num_classes: 2              # Binary classification
+  
+# Training settings  
+training:
+  epochs: 100
+  batch_size: 8               # Increase for more VRAM
+  learning_rate: 0.0001
+  
+# Data settings
+data:
+  patch_size: 256
+  bands: ["B2", "B3", "B4", "B8", "B11", "B12"]
+
+# Inference settings
+inference:
+  confidence_threshold: 0.5   # Minimum confidence for detection
+  min_area_m2: 10000          # Minimum debris area (m²)
+```
+
+---
+
+## 🔧 Detailed Usage
+
+### Training
+
+```bash
+# Basic training
+python scripts/train.py
+
+# Custom training
+python scripts/train.py \
+    --epochs 100 \
+    --batch-size 8 \
+    --lr 0.0001 \
+    --checkpoint outputs/models/checkpoint.pth  # Resume training
+
+# Monitor training (in another terminal)
+tensorboard --logdir outputs/logs
+```
+
+### Inference
+
+```bash
+# Single image
+python scripts/predict.py \
+    --input data/raw/my_scene.tif \
+    --output outputs/predictions/ \
+    --model outputs/models/best_model.pth
+
+# Batch processing
+python scripts/predict.py \
+    --input-dir data/raw/scenes/ \
+    --output outputs/predictions/ \
+    --model outputs/models/best_model.pth
+
+# With visualization
+python scripts/predict.py \
+    --input data/raw/my_scene.tif \
+    --output outputs/predictions/ \
+    --visualize
+```
+
+### Evaluation
+
+```bash
+# Evaluate on test set
+python scripts/evaluate.py \
+    --model outputs/models/best_model.pth \
+    --data-dir data/marida/test
+```
+
+---
+
+## 📈 Outputs
+
+### 1. Probability Heatmap (GeoTIFF)
+```
+outputs/predictions/scene_name_heatmap.tif
+```
+- Georeferenced probability map (0-1)
+- Same CRS as input imagery
+- Viewable in QGIS, ArcGIS, Google Earth
+
+### 2. Hotspot Polygons (GeoJSON)
+```
+outputs/predictions/scene_name_hotspots.geojson
+```
+```json
+{
+  "type": "FeatureCollection",
+  "features": [{
+    "type": "Feature",
+    "properties": {
+      "confidence": 0.87,
+      "area_m2": 45000,
+      "centroid_lat": 37.7892,
+      "centroid_lon": -122.4324
+    },
+    "geometry": { "type": "Polygon", "coordinates": [...] }
+  }]
+}
+```
+
+### 3. Ranked Hotspot CSV
+```
+outputs/predictions/scene_name_hotspots.csv
+```
+```csv
+rank,latitude,longitude,area_m2,confidence,timestamp
+1,37.7892,-122.4324,45000,0.87,2024-01-15T10:30:00Z
+2,37.8123,-122.3987,32000,0.82,2024-01-15T10:30:00Z
+```
+
+---
+
+## 🍎 Apple Silicon Optimization
+
+This code automatically uses **MPS (Metal Performance Shaders)** on Apple Silicon:
+
+```python
+# Automatic device selection in code
+device = (
+    "mps" if torch.backends.mps.is_available() 
+    else "cuda" if torch.cuda.is_available() 
+    else "cpu"
+)
+```
+
+**Performance tips for M4 Max:**
+- Batch size 8-16 works well
+- Mixed precision training is supported
+- ~2-3x faster than CPU-only
+
+---
+
+## 🔬 API Usage (For Developers)
+
+```python
+from src.inference import MarineDebrisPredictor
+from src.data import load_sentinel2_scene
+
+# Initialize predictor
+predictor = MarineDebrisPredictor(
+    model_path="outputs/models/best_model.pth",
+    device="mps"  # or "cuda", "cpu"
+)
+
+# Load and predict
+scene = load_sentinel2_scene("path/to/scene.tif")
+results = predictor.predict(scene)
+
+# Access results
+heatmap = results["probability_map"]      # numpy array
+hotspots = results["hotspots"]            # GeoDataFrame
+metadata = results["metadata"]            # dict
+
+# Save outputs
+predictor.save_results(results, "outputs/predictions/")
+```
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=html
+```
+
+---
+
+## 📚 References
+
+- [MARIDA Dataset Paper](https://arxiv.org/abs/2110.01975)
+- [SegFormer Paper](https://arxiv.org/abs/2105.15203)
+- [Sentinel-2 User Guide](https://sentinel.esa.int/web/sentinel/user-guides/sentinel-2-msi)
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) file.
+
+---
+
+## 🙏 Acknowledgments
+
+- MARIDA dataset creators
+- European Space Agency (Sentinel-2 data)
+- Hugging Face (SegFormer implementation)
+
+---
+
+*Built for the Presidential AI Challenge — Protecting Our Oceans with AI* 🌊

@@ -1,0 +1,173 @@
+# Marine Debris Detection Configuration
+# ======================================
+
+# Project metadata
+project:
+  name: "marine-debris-detection"
+  version: "1.0.0"
+  seed: 42
+
+# Device settings (auto-detected, but can override)
+device: "auto"  # "auto", "mps", "cuda", or "cpu"
+
+# Data configuration
+data:
+  # Sentinel-2 bands to use
+  bands:
+    - "B2"   # Blue (490nm) - 10m
+    - "B3"   # Green (560nm) - 10m
+    - "B4"   # Red (665nm) - 10m
+    - "B8"   # NIR (842nm) - 10m
+    - "B11"  # SWIR1 (1610nm) - 20m
+    - "B12"  # SWIR2 (2190nm) - 20m
+  
+  # Band normalization statistics (from MARIDA dataset)
+  normalization:
+    mean: [0.0582, 0.0556, 0.0480, 0.1011, 0.1257, 0.0902]
+    std: [0.0276, 0.0267, 0.0308, 0.0522, 0.0560, 0.0479]
+  
+  # Preprocessing
+  target_resolution_m: 10
+  patch_size: 256
+  overlap: 64
+  
+  # Paths
+  marida_dir: "data/marida"
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  
+  # Split ratios
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  
+  # Data loading
+  num_workers: 4
+  pin_memory: true
+
+# Class definitions
+classes:
+  names:
+    0: "background"
+    1: "marine_debris"
+  
+  # MARIDA class mapping to binary
+  marida_mapping:
+    Marine_Debris: 1
+    Dense_Sargassum: 0
+    Sparse_Sargassum: 0
+    Natural_Organic_Material: 0
+    Ship: 0
+    Clouds: 0
+    Marine_Water: 0
+    Sediment_Laden_Water: 0
+    Foam: 0
+    Turbid_Water: 0
+    Shallow_Water: 0
+    Waves: 0
+    Cloud_Shadows: 0
+    Wakes: 0
+    Mixed_Water: 0
+
+# Model configuration
+model:
+  # Architecture
+  name: "segformer"
+  backbone: "mit_b2"  # mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5
+  num_classes: 2
+  in_channels: 6
+  
+  # Pretrained weights
+  pretrained: true
+  pretrained_backbone: "nvidia/segformer-b2-finetuned-ade-512-512"
+
+# Training configuration
+training:
+  # Basic settings
+  epochs: 100
+  batch_size: 8
+  accumulate_grad_batches: 1
+  
+  # Optimizer
+  optimizer: "adamw"
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  
+  # Learning rate scheduler
+  scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 0.000001
+  
+  # Loss function
+  loss:
+    type: "combined"  # "ce", "dice", "combined"
+    ce_weight: 0.5
+    dice_weight: 0.5
+    class_weights: [0.3, 0.7]  # [background, debris] - handle imbalance
+  
+  # Augmentation
+  augmentation:
+    enabled: true
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    rotate_90: 0.5
+    brightness_contrast: 0.2
+    gaussian_noise: 0.1
+  
+  # Checkpointing
+  save_every_n_epochs: 10
+  save_top_k: 3
+  monitor_metric: "val_iou"
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 20
+    min_delta: 0.001
+
+# Inference configuration
+inference:
+  # Sliding window
+  tile_size: 512
+  overlap: 128
+  batch_size: 4
+  
+  # Post-processing
+  confidence_threshold: 0.5
+  min_area_pixels: 100  # Minimum area in pixels
+  min_area_m2: 10000    # Minimum area in square meters
+  
+  # Morphological operations
+  apply_morphology: true
+  kernel_size: 3
+  
+  # Output formats
+  save_heatmap: true
+  save_hotspots_geojson: true
+  save_hotspots_csv: true
+  save_visualization: true
+
+# Evaluation configuration
+evaluation:
+  metrics:
+    - "iou"
+    - "dice"
+    - "precision"
+    - "recall"
+    - "f1"
+  threshold: 0.5
+
+# Logging configuration
+logging:
+  level: "INFO"
+  tensorboard: true
+  log_dir: "outputs/logs"
+  log_every_n_steps: 10
+
+# Output paths
+outputs:
+  models_dir: "outputs/models"
+  predictions_dir: "outputs/predictions"
+  logs_dir: "outputs/logs"
+  figures_dir: "outputs/figures"

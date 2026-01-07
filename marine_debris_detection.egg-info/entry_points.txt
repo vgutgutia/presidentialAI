@@ -1,0 +1,5 @@
+[console_scripts]
+mdd-download = scripts.download_marida:main
+mdd-evaluate = scripts.evaluate:main
+mdd-predict = scripts.predict:main
+mdd-train = scripts.train:main
