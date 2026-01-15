@@ -1,40 +1,40 @@
 """
-Training loop and utilities.
+Training loop and utilities for marine debris detection.
 """
 
 import os
 import time
 from pathlib import Path
-from typing import Dict, Optional, Any, Callable
+from typing import Dict, Optional, Tuple, Any, List
 from datetime import datetime
 
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR, ReduceLROnPlateau
 from tqdm import tqdm
-from rich.console import Console
-from rich.table import Table
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    HAS_TENSORBOARD = True
+except ImportError:
+    HAS_TENSORBOARD = False
 
 from src.training.losses import get_loss_function
-from src.training.metrics import MetricTracker, compute_metrics
-
-
-console = Console()
+from src.training.metrics import compute_metrics, MetricTracker
 
 
 class Trainer:
     """
-    Training loop manager for marine debris detection.
-    
-    Handles training, validation, checkpointing, and logging.
+    Trainer class for marine debris segmentation models.
     
     Args:
-        model: Model to train
-        config: Training configuration dict
-        device: Device to train on ('mps', 'cuda', 'cpu')
-        output_dir: Directory for outputs
+        model: PyTorch model to train
+        config: Training configuration dictionary
+        device: Device to train on ('cuda', 'mps', 'cpu')
+        output_dir: Directory to save outputs
     """
     
     def __init__(
@@ -44,7 +44,7 @@ class Trainer:
         device: str = "cpu",
         output_dir: str = "outputs",
     ):
-        self.model = model.to(device)
+        self.model = model
         self.config = config
         self.device = device
         self.output_dir = Path(output_dir)
@@ -55,151 +55,174 @@ class Trainer:
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize loss function
-        self.criterion = get_loss_function(config.get("loss", {}))
+        # Move model to device
+        self.model = self.model.to(device)
         
-        # Initialize optimizer
-        self.optimizer = AdamW(
-            model.parameters(),
-            lr=config.get("learning_rate", 1e-4),
-            weight_decay=config.get("weight_decay", 0.01),
-            betas=tuple(config.get("betas", [0.9, 0.999])),
-        )
+        # Setup loss function
+        loss_config = config.get("loss", {"type": "combined"})
+        self.criterion = get_loss_function(loss_config)
         
-        # Learning rate scheduler
-        self.scheduler = self._create_scheduler(config)
+        # Setup optimizer
+        self.optimizer = self._create_optimizer()
+        
+        # Setup scheduler (will be created in train())
+        self.scheduler = None
+        
+        # Setup tensorboard
+        if HAS_TENSORBOARD:
+            self.writer = SummaryWriter(
+                log_dir=str(self.logs_dir / "tensorboard" / datetime.now().strftime("%Y%m%d_%H%M%S"))
+            )
+        else:
+            self.writer = None
         
         # Training state
-        self.current_epoch = 0
+        self.epoch = 0
+        self.global_step = 0
         self.best_metric = 0.0
         self.history = {"train": [], "val": []}
         
-        # TensorBoard writer
-        self.writer = None
-        if config.get("tensorboard", True):
-            try:
-                from torch.utils.tensorboard import SummaryWriter
-                self.writer = SummaryWriter(self.logs_dir / "tensorboard")
-            except ImportError:
-                console.print("[yellow]TensorBoard not available[/yellow]")
+        # Number of classes
+        self.num_classes = config.get("num_classes", 2)
     
-    def _create_scheduler(self, config: Dict) -> Optional[Any]:
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Create optimizer based on config."""
+        optimizer_name = self.config.get("optimizer", "adamw").lower()
+        lr = self.config.get("learning_rate", 1e-4)
+        weight_decay = self.config.get("weight_decay", 0.01)
+        
+        if optimizer_name == "adamw":
+            return optim.AdamW(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+            )
+        elif optimizer_name == "adam":
+            return optim.Adam(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+            )
+        elif optimizer_name == "sgd":
+            return optim.SGD(
+                self.model.parameters(),
+                lr=lr,
+                momentum=self.config.get("momentum", 0.9),
+                weight_decay=weight_decay,
+            )
+        else:
+            raise ValueError(f"Unknown optimizer: {optimizer_name}")
+    
+    def _create_scheduler(self, num_training_steps: int):
         """Create learning rate scheduler."""
-        scheduler_type = config.get("scheduler", "cosine")
-        epochs = config.get("epochs", 100)
-        warmup_epochs = config.get("warmup_epochs", 5)
-        min_lr = config.get("min_lr", 1e-6)
+        scheduler_name = self.config.get("scheduler", "cosine").lower()
         
-        if scheduler_type == "cosine":
-            # Warmup + cosine annealing
-            warmup_scheduler = LinearLR(
+        if scheduler_name == "cosine":
+            warmup_epochs = self.config.get("warmup_epochs", 5)
+            self.scheduler = CosineAnnealingLR(
                 self.optimizer,
-                start_factor=0.1,
-                total_iters=warmup_epochs,
+                T_max=num_training_steps,
+                eta_min=self.config.get("min_lr", 1e-6),
             )
-            
-            main_scheduler = CosineAnnealingLR(
+        elif scheduler_name == "onecycle":
+            self.scheduler = OneCycleLR(
                 self.optimizer,
-                T_max=epochs - warmup_epochs,
-                eta_min=min_lr,
+                max_lr=self.config.get("learning_rate", 1e-4),
+                total_steps=num_training_steps,
             )
-            
-            scheduler = SequentialLR(
+        elif scheduler_name == "plateau":
+            self.scheduler = ReduceLROnPlateau(
                 self.optimizer,
-                schedulers=[warmup_scheduler, main_scheduler],
-                milestones=[warmup_epochs],
+                mode="max",
+                factor=0.5,
+                patience=5,
             )
-            
-            return scheduler
-        
-        return None
+        else:
+            self.scheduler = None
     
     def train(
         self,
         train_loader: DataLoader,
         val_loader: DataLoader,
-        epochs: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        epochs: int = 100,
+    ) -> Dict[str, List[float]]:
         """
-        Run training loop.
+        Train the model.
         
         Args:
             train_loader: Training data loader
             val_loader: Validation data loader
-            epochs: Number of epochs (overrides config)
+            epochs: Number of epochs to train
             
         Returns:
-            Training history
+            Training history dictionary
         """
-        epochs = epochs or self.config.get("epochs", 100)
-        
-        console.print(f"\n[bold green]Starting training for {epochs} epochs[/bold green]")
-        console.print(f"Device: {self.device}")
-        console.print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        num_training_steps = epochs * len(train_loader)
+        self._create_scheduler(num_training_steps)
         
         # Early stopping
-        early_stop_config = self.config.get("early_stopping", {})
-        patience = early_stop_config.get("patience", 20)
-        min_delta = early_stop_config.get("min_delta", 0.001)
-        epochs_without_improvement = 0
+        patience = self.config.get("early_stopping_patience", 20)
+        no_improve_count = 0
         
-        try:
-            for epoch in range(self.current_epoch, epochs):
-                self.current_epoch = epoch
-                
-                # Training phase
-                train_metrics = self._train_epoch(train_loader, epoch)
-                self.history["train"].append(train_metrics)
-                
-                # Validation phase
-                val_metrics = self._validate_epoch(val_loader, epoch)
-                self.history["val"].append(val_metrics)
-                
-                # Update scheduler
-                if self.scheduler is not None:
-                    self.scheduler.step()
-                
-                # Log metrics
-                self._log_epoch(epoch, train_metrics, val_metrics)
-                
-                # Checkpointing
-                monitor_metric = val_metrics.get("iou_debris", val_metrics.get("iou_mean", 0))
-                
-                if monitor_metric > self.best_metric + min_delta:
-                    self.best_metric = monitor_metric
-                    self._save_checkpoint("best_model.pth", is_best=True)
-                    epochs_without_improvement = 0
-                else:
-                    epochs_without_improvement += 1
-                
-                # Save periodic checkpoint
-                if (epoch + 1) % self.config.get("save_every_n_epochs", 10) == 0:
-                    self._save_checkpoint(f"checkpoint_epoch_{epoch+1}.pth")
-                
-                # Early stopping
-                if early_stop_config.get("enabled", True) and epochs_without_improvement >= patience:
-                    console.print(f"\n[yellow]Early stopping triggered after {patience} epochs without improvement[/yellow]")
-                    break
+        print(f"Starting training for {epochs} epochs")
+        print(f"Training batches: {len(train_loader)}")
+        print(f"Validation batches: {len(val_loader)}")
         
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Training interrupted by user[/yellow]")
-        
-        finally:
-            # Save final checkpoint
-            self._save_checkpoint("final_model.pth")
+        for epoch in range(self.epoch, epochs):
+            self.epoch = epoch
             
-            if self.writer:
-                self.writer.close()
+            # Training epoch
+            train_metrics = self._train_epoch(train_loader, epoch)
+            self.history["train"].append(train_metrics)
+            
+            # Validation epoch
+            val_metrics = self._validate_epoch(val_loader, epoch)
+            self.history["val"].append(val_metrics)
+            
+            # Update scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["iou_mean"])
+                else:
+                    pass  # Step per batch for other schedulers
+            
+            # Print epoch summary
+            print(f"\nEpoch {epoch + 1}/{epochs}")
+            print(f"  Train Loss: {train_metrics['loss']:.4f} | IoU: {train_metrics['iou_mean']:.4f}")
+            print(f"  Val Loss:   {val_metrics['loss']:.4f} | IoU: {val_metrics['iou_mean']:.4f}")
+            
+            # Check for improvement
+            current_metric = val_metrics["iou_mean"]
+            if current_metric > self.best_metric:
+                self.best_metric = current_metric
+                no_improve_count = 0
+                self._save_checkpoint("best_model.pth")
+                print(f"  New best model! IoU: {self.best_metric:.4f}")
+            else:
+                no_improve_count += 1
+            
+            # Save periodic checkpoint
+            if (epoch + 1) % self.config.get("save_every", 10) == 0:
+                self._save_checkpoint(f"checkpoint_epoch_{epoch + 1}.pth")
+            
+            # Early stopping
+            if no_improve_count >= patience:
+                print(f"\nEarly stopping after {patience} epochs without improvement")
+                break
+        
+        # Save final model
+        self._save_checkpoint("final_model.pth")
         
         return self.history
     
-    def _train_epoch(self, loader: DataLoader, epoch: int) -> Dict[str, float]:
+    def _train_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
         """Run one training epoch."""
         self.model.train()
         
-        metric_tracker = MetricTracker(num_classes=self.config.get("num_classes", 2))
+        total_loss = 0.0
+        metric_tracker = MetricTracker(num_classes=self.num_classes)
         
-        pbar = tqdm(loader, desc=f"Epoch {epoch+1} [Train]", leave=False)
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1} [Train]")
         
         for batch in pbar:
             images = batch["image"].to(self.device)
@@ -208,147 +231,181 @@ class Trainer:
             # Forward pass
             self.optimizer.zero_grad()
             outputs = self.model(images)
+            
+            # Handle different output formats
+            if isinstance(outputs, dict):
+                outputs = outputs.get("logits", outputs.get("out", list(outputs.values())[0]))
+            
+            # Resize outputs if needed
+            if outputs.shape[-2:] != masks.shape[-2:]:
+                outputs = nn.functional.interpolate(
+                    outputs,
+                    size=masks.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            
+            # Compute loss
             loss = self.criterion(outputs, masks)
             
             # Backward pass
             loss.backward()
             
             # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            if self.config.get("grad_clip", 0) > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.config["grad_clip"],
+                )
             
             self.optimizer.step()
             
-            # Update metrics
-            with torch.no_grad():
-                metric_tracker.update(outputs, masks, loss=loss.item())
+            # Update scheduler (per step for some schedulers)
+            if self.scheduler is not None and not isinstance(self.scheduler, ReduceLROnPlateau):
+                self.scheduler.step()
             
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            # Track metrics
+            total_loss += loss.item()
+            
+            with torch.no_grad():
+                predictions = outputs.argmax(dim=1)
+                metric_tracker.update(outputs, masks)
+            
+            # Update progress bar
+            pbar.set_postfix({"loss": loss.item()})
+            
+            self.global_step += 1
+            
+            # Log to tensorboard
+            if self.writer is not None and self.global_step % 100 == 0:
+                self.writer.add_scalar("train/loss", loss.item(), self.global_step)
+                self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]["lr"], self.global_step)
         
-        return metric_tracker.compute()
+        # Compute epoch metrics
+        metrics = metric_tracker.compute()
+        metrics["loss"] = total_loss / len(dataloader)
+        
+        return metrics
     
-    @torch.no_grad()
-    def _validate_epoch(self, loader: DataLoader, epoch: int) -> Dict[str, float]:
+    def _validate_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
         """Run one validation epoch."""
         self.model.eval()
         
-        metric_tracker = MetricTracker(num_classes=self.config.get("num_classes", 2))
+        total_loss = 0.0
+        metric_tracker = MetricTracker(num_classes=self.num_classes)
         
-        pbar = tqdm(loader, desc=f"Epoch {epoch+1} [Val]", leave=False)
-        
-        for batch in pbar:
-            images = batch["image"].to(self.device)
-            masks = batch["mask"].to(self.device)
+        with torch.no_grad():
+            pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1} [Val]")
             
-            outputs = self.model(images)
-            loss = self.criterion(outputs, masks)
-            
-            metric_tracker.update(outputs, masks, loss=loss.item())
+            for batch in pbar:
+                images = batch["image"].to(self.device)
+                masks = batch["mask"].to(self.device)
+                
+                # Forward pass
+                outputs = self.model(images)
+                
+                # Handle different output formats
+                if isinstance(outputs, dict):
+                    outputs = outputs.get("logits", outputs.get("out", list(outputs.values())[0]))
+                
+                # Resize outputs if needed
+                if outputs.shape[-2:] != masks.shape[-2:]:
+                    outputs = nn.functional.interpolate(
+                        outputs,
+                        size=masks.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                
+                # Compute loss
+                loss = self.criterion(outputs, masks)
+                total_loss += loss.item()
+                
+                # Track metrics
+                metric_tracker.update(outputs, masks)
         
-        return metric_tracker.compute()
+        # Compute epoch metrics
+        metrics = metric_tracker.compute()
+        metrics["loss"] = total_loss / len(dataloader)
+        
+        # Log to tensorboard
+        if self.writer is not None:
+            self.writer.add_scalar("val/loss", metrics["loss"], epoch)
+            self.writer.add_scalar("val/iou_mean", metrics["iou_mean"], epoch)
+        
+        return metrics
     
-    def _log_epoch(
-        self,
-        epoch: int,
-        train_metrics: Dict[str, float],
-        val_metrics: Dict[str, float],
-    ):
-        """Log epoch results."""
-        # Create table
-        table = Table(title=f"Epoch {epoch + 1}")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Train", style="green")
-        table.add_column("Val", style="yellow")
-        
-        # Key metrics to display
-        key_metrics = ["loss", "iou_debris", "dice_debris", "precision_debris", "recall_debris"]
-        
-        for metric in key_metrics:
-            train_val = train_metrics.get(metric, 0)
-            val_val = val_metrics.get(metric, 0)
-            table.add_row(metric, f"{train_val:.4f}", f"{val_val:.4f}")
-        
-        console.print(table)
-        
-        # TensorBoard logging
-        if self.writer:
-            for name, value in train_metrics.items():
-                self.writer.add_scalar(f"train/{name}", value, epoch)
-            for name, value in val_metrics.items():
-                self.writer.add_scalar(f"val/{name}", value, epoch)
-            
-            self.writer.add_scalar("lr", self.optimizer.param_groups[0]["lr"], epoch)
-    
-    def _save_checkpoint(self, filename: str, is_best: bool = False):
+    def _save_checkpoint(self, filename: str):
         """Save model checkpoint."""
         checkpoint = {
-            "epoch": self.current_epoch,
+            "epoch": self.epoch,
+            "global_step": self.global_step,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
             "best_metric": self.best_metric,
             "config": self.config,
-            "history": self.history,
         }
+        
+        if self.scheduler is not None:
+            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
         
         path = self.models_dir / filename
         torch.save(checkpoint, path)
-        
-        if is_best:
-            console.print(f"[green]✓ Saved best model (IoU: {self.best_metric:.4f})[/green]")
     
-    def load_checkpoint(self, checkpoint_path: str):
-        """Load model from checkpoint."""
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+    def load_checkpoint(self, path: str):
+        """Load model checkpoint."""
+        checkpoint = torch.load(path, map_location=self.device)
         
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.epoch = checkpoint.get("epoch", 0)
+        self.global_step = checkpoint.get("global_step", 0)
+        self.best_metric = checkpoint.get("best_metric", 0.0)
         
-        if self.scheduler and checkpoint.get("scheduler_state_dict"):
+        if self.scheduler is not None and "scheduler_state_dict" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         
-        self.current_epoch = checkpoint.get("epoch", 0) + 1
-        self.best_metric = checkpoint.get("best_metric", 0)
-        self.history = checkpoint.get("history", {"train": [], "val": []})
-        
-        console.print(f"[green]Loaded checkpoint from epoch {self.current_epoch}[/green]")
+        print(f"Loaded checkpoint from epoch {self.epoch}")
 
 
-def create_augmentations(config: Dict) -> Any:
+def create_augmentations(config: Dict[str, Any]):
     """
-    Create data augmentation transforms.
+    Create albumentations augmentation pipeline.
     
     Args:
         config: Augmentation configuration
         
     Returns:
-        Albumentations transform pipeline
+        Albumentations Compose object or None
     """
-    import albumentations as A
+    try:
+        import albumentations as A
+    except ImportError:
+        print("[WARNING] albumentations not installed, skipping augmentations")
+        return None
     
     if not config.get("enabled", True):
         return None
     
-    transforms = [
-        A.HorizontalFlip(p=config.get("horizontal_flip", 0.5)),
-        A.VerticalFlip(p=config.get("vertical_flip", 0.5)),
-        A.RandomRotate90(p=config.get("rotate_90", 0.5)),
-    ]
+    transforms = []
     
-    if config.get("brightness_contrast", 0) > 0:
+    # Geometric transforms (safe for all image types)
+    if config.get("horizontal_flip", True):
+        transforms.append(A.HorizontalFlip(p=0.5))
+    
+    if config.get("vertical_flip", True):
+        transforms.append(A.VerticalFlip(p=0.5))
+    
+    if config.get("rotate", True):
         transforms.append(
-            A.RandomBrightnessContrast(
-                brightness_limit=config.get("brightness_contrast", 0.2),
-                contrast_limit=config.get("brightness_contrast", 0.2),
-                p=0.5,
-            )
+            A.RandomRotate90(p=0.5)
         )
     
-    if config.get("gaussian_noise", 0) > 0:
-        transforms.append(
-            A.GaussNoise(
-                std_range=(0, config.get("gaussian_noise", 0.1)),
-                p=0.3,
-            )
-        )
+    # Note: Skipping color/noise augmentations that cause OpenCV issues
+    # with multi-channel float images. The geometric transforms above
+    # are sufficient for satellite imagery.
+    
+    if len(transforms) == 0:
+        return None
     
     return A.Compose(transforms)
