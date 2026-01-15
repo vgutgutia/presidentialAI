@@ -1,24 +1,30 @@
-# 🌊 Marine Debris Early Warning System
+# Marine Debris Early Warning System
 
-**AI-powered satellite imagery analysis for detecting offshore marine debris accumulation zones.**
+**Satellite-Based Detection of Offshore Marine Debris Using Deep Learning**
 
 *Presidential AI Challenge Submission*
 
 ---
 
-## 🎯 What This Does
+## Overview
 
-This system automatically detects marine debris (plastics, waste) floating in ocean waters using free Sentinel-2 satellite imagery. It produces:
+This system automatically detects marine debris (plastics, waste) floating in ocean waters using free Sentinel-2 satellite imagery. It produces georeferenced probability heatmaps, ranked hotspot lists with GPS coordinates, and GIS-ready outputs for integration with environmental monitoring workflows.
 
-- **Heatmaps** showing debris probability across ocean areas
-- **Ranked hotspot lists** with GPS coordinates for cleanup prioritization  
-- **GIS-ready outputs** (GeoTIFF, GeoJSON) for integration with mapping tools
+The solution addresses a critical environmental challenge: marine debris accumulates offshore before washing onto coastlines, damaging ecosystems, fisheries, and local economies. Traditional monitoring using ships, aircraft, or buoys is prohibitively expensive. This AI-driven approach enables scalable, low-cost detection using publicly available satellite data.
 
 ---
 
-## 🖥️ System Requirements
+## Key Features
 
-This project is optimized for **Apple Silicon (M4 Max)** but works on any system:
+- **Multispectral Analysis**: Processes 6 Sentinel-2 bands (Blue, Green, Red, NIR, SWIR1, SWIR2) for robust debris discrimination
+- **Transformer Architecture**: SegFormer-based semantic segmentation adapted for satellite imagery
+- **Georeferenced Outputs**: GeoTIFF heatmaps, GeoJSON polygons, and CSV reports preserving spatial metadata
+- **Apple Silicon Optimized**: Automatic MPS (Metal Performance Shaders) detection for M-series Macs
+- **Production Ready**: Comprehensive error handling, logging, and checkpoint management
+
+---
+
+## System Requirements
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
@@ -29,247 +35,201 @@ This project is optimized for **Apple Silicon (M4 Max)** but works on any system
 
 ---
 
-## 🚀 Quick Start (5 Minutes)
+## Installation
 
-### Step 1: Clone and Setup
+### 1. Clone the Repository
 
 ```bash
-# Clone your repository
 git clone https://github.com/YOUR_USERNAME/marine-debris-detection.git
 cd marine-debris-detection
+```
 
-# Create virtual environment
+### 2. Create Virtual Environment
+
+```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-# Install dependencies (optimized for Apple Silicon)
+### 3. Install Dependencies
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# Install the package
 pip install -e .
 ```
 
-### Step 2: Download Training Data
+---
+
+## Dataset Setup
+
+This project uses the MARIDA (Marine Debris Archive) dataset, which must be downloaded manually from GitHub.
+
+### Download Instructions
+
+1. Visit: https://github.com/marine-debris/marine-debris.github.io
+
+2. Clone or download the repository:
+   ```bash
+   git clone https://github.com/marine-debris/marine-debris.github.io.git
+   ```
+
+3. Copy the data to your project:
+   ```bash
+   mkdir -p data/marida
+   cp -r marine-debris.github.io/patches data/marida/
+   cp -r marine-debris.github.io/shapefiles data/marida/
+   cp -r marine-debris.github.io/splits data/marida/
+   cp marine-debris.github.io/labels_mapping.txt data/marida/
+   ```
+
+4. Verify the dataset:
+   ```bash
+   python scripts/download_marida.py --verify
+   ```
+
+### Expected Directory Structure
+
+```
+data/marida/
+├── labels_mapping.txt
+├── patches/
+│   └── S2_DATE_ROI/
+│       ├── S2_DATE_ROI_0.tif      (image patches)
+│       └── S2_DATE_ROI_0_cl.tif   (label patches)
+├── shapefiles/
+└── splits/
+    ├── train.txt
+    ├── val.txt
+    └── test.txt
+```
+
+### Alternative: Sample Data for Testing
+
+To test the pipeline without downloading the full dataset:
 
 ```bash
-# Download MARIDA dataset (~2GB)
-python scripts/download_marida.py
-```
-
-### Step 3: Train the Model
-
-```bash
-# Train with default settings (uses MPS on M4 Max automatically)
-python scripts/train.py
-
-# Or with custom settings
-python scripts/train.py --epochs 50 --batch-size 8
-```
-
-### Step 4: Run Detection on New Imagery
-
-```bash
-# Run inference on a Sentinel-2 image
-python scripts/predict.py --input path/to/sentinel2_image.tif --output outputs/
-
-# Run on sample data (included)
-python scripts/predict.py --demo
+python scripts/download_marida.py --sample-only
 ```
 
 ---
 
-## 📁 Project Structure
-
-```
-marine-debris-detection/
-├── README.md                 # You are here
-├── requirements.txt          # Python dependencies
-├── setup.py                  # Package installation
-├── config.yaml              # Main configuration
-│
-├── src/                     # Source code
-│   ├── __init__.py
-│   ├── data/               # Data loading & preprocessing
-│   │   ├── __init__.py
-│   │   ├── dataset.py      # PyTorch dataset
-│   │   ├── preprocessing.py # Image preprocessing
-│   │   └── download.py     # Data download utilities
-│   │
-│   ├── models/             # Neural network models
-│   │   ├── __init__.py
-│   │   └── segformer.py    # SegFormer for multispectral
-│   │
-│   ├── training/           # Training utilities
-│   │   ├── __init__.py
-│   │   ├── trainer.py      # Training loop
-│   │   ├── losses.py       # Loss functions
-│   │   └── metrics.py      # Evaluation metrics
-│   │
-│   ├── inference/          # Prediction pipeline
-│   │   ├── __init__.py
-│   │   └── predictor.py    # Inference engine
-│   │
-│   └── utils/              # Utilities
-│       ├── __init__.py
-│       ├── geo.py          # Geospatial utilities
-│       └── visualization.py # Plotting functions
-│
-├── scripts/                 # Entry point scripts
-│   ├── download_marida.py  # Download training data
-│   ├── train.py            # Train the model
-│   ├── predict.py          # Run inference
-│   └── evaluate.py         # Evaluate model
-│
-├── data/                    # Data directory (created automatically)
-│   ├── marida/             # MARIDA dataset
-│   └── raw/                # Raw Sentinel-2 scenes
-│
-├── outputs/                 # Output directory
-│   ├── models/             # Saved model weights
-│   ├── predictions/        # Prediction outputs
-│   └── logs/               # Training logs
-│
-└── notebooks/              # Jupyter notebooks
-    └── exploration.ipynb   # Data exploration
-```
-
----
-
-## 📊 Data
-
-### MARIDA Dataset
-
-We use the [MARIDA](https://github.com/marine-debris/marine-debris.github.io) (Marine Debris Archive) dataset:
-
-- **Source**: Sentinel-2 multispectral satellite imagery
-- **Annotations**: Pixel-level semantic labels
-- **Classes**: Marine Debris, Sargassum, Ships, Foam, Water types, etc.
-- **Size**: ~2GB
-
-### Sentinel-2 Bands Used
-
-| Band | Name | Resolution | Use |
-|------|------|------------|-----|
-| B2 | Blue | 10m | Water penetration |
-| B3 | Green | 10m | Debris detection |
-| B4 | Red | 10m | Debris detection |
-| B8 | NIR | 10m | Vegetation/debris separation |
-| B11 | SWIR1 | 20m | Material discrimination |
-| B12 | SWIR2 | 20m | Material discrimination |
-
----
-
-## 🧠 Model Architecture
-
-**SegFormer-B2** adapted for 6-band multispectral input:
-
-```
-Input (6 bands) → Patch Embedding → Mix Transformer Encoder → MLP Decoder → Output (2 classes)
-```
-
-Key modifications:
-- First convolution layer accepts 6 channels instead of 3
-- Pretrained weights loaded for all other layers
-- Binary output: debris vs. non-debris
-
----
-
-## ⚙️ Configuration
-
-Edit `config.yaml` to customize:
-
-```yaml
-# Model settings
-model:
-  backbone: "mit_b2"          # SegFormer variant
-  num_classes: 2              # Binary classification
-  
-# Training settings  
-training:
-  epochs: 100
-  batch_size: 8               # Increase for more VRAM
-  learning_rate: 0.0001
-  
-# Data settings
-data:
-  patch_size: 256
-  bands: ["B2", "B3", "B4", "B8", "B11", "B12"]
-
-# Inference settings
-inference:
-  confidence_threshold: 0.5   # Minimum confidence for detection
-  min_area_m2: 10000          # Minimum debris area (m²)
-```
-
----
-
-## 🔧 Detailed Usage
+## Usage
 
 ### Training
 
 ```bash
-# Basic training
+# Basic training (auto-detects MPS on Apple Silicon)
 python scripts/train.py
 
-# Custom training
-python scripts/train.py \
-    --epochs 100 \
-    --batch-size 8 \
-    --lr 0.0001 \
-    --checkpoint outputs/models/checkpoint.pth  # Resume training
+# Custom training configuration
+python scripts/train.py --epochs 100 --batch-size 8 --lr 0.0001
 
-# Monitor training (in another terminal)
-tensorboard --logdir outputs/logs
+# Resume from checkpoint
+python scripts/train.py --checkpoint outputs/models/checkpoint.pth
+```
+
+Training progress is logged to TensorBoard:
+```bash
+tensorboard --logdir outputs/logs/tensorboard
 ```
 
 ### Inference
 
 ```bash
-# Single image
+# Single image prediction
 python scripts/predict.py \
-    --input data/raw/my_scene.tif \
-    --output outputs/predictions/ \
-    --model outputs/models/best_model.pth
+    --input path/to/sentinel2_scene.tif \
+    --model outputs/models/best_model.pth \
+    --output outputs/predictions/
 
 # Batch processing
 python scripts/predict.py \
     --input-dir data/raw/scenes/ \
-    --output outputs/predictions/ \
-    --model outputs/models/best_model.pth
+    --model outputs/models/best_model.pth \
+    --output outputs/predictions/
 
 # With visualization
 python scripts/predict.py \
-    --input data/raw/my_scene.tif \
-    --output outputs/predictions/ \
+    --input path/to/scene.tif \
+    --model outputs/models/best_model.pth \
     --visualize
 ```
 
 ### Evaluation
 
 ```bash
-# Evaluate on test set
 python scripts/evaluate.py \
     --model outputs/models/best_model.pth \
-    --data-dir data/marida/test
+    --data-dir data/marida \
+    --split test
 ```
 
 ---
 
-## 📈 Outputs
+## Project Structure
+
+```
+marine-debris-detection/
+├── config.yaml              # Main configuration file
+├── requirements.txt         # Python dependencies
+├── setup.py                 # Package installation
+│
+├── src/                     # Source code
+│   ├── data/                # Data loading and preprocessing
+│   │   ├── dataset.py       # PyTorch datasets for MARIDA
+│   │   ├── preprocessing.py # Image preprocessing utilities
+│   │   └── download.py      # Dataset download helpers
+│   │
+│   ├── models/              # Neural network architectures
+│   │   └── segformer.py     # SegFormer adapted for multispectral input
+│   │
+│   ├── training/            # Training utilities
+│   │   ├── trainer.py       # Training loop
+│   │   ├── losses.py        # Loss functions (Dice, Combined)
+│   │   └── metrics.py       # Evaluation metrics (IoU, F1)
+│   │
+│   ├── inference/           # Prediction pipeline
+│   │   └── predictor.py     # Inference engine with tiling
+│   │
+│   └── utils/               # Utilities
+│       ├── device.py        # Device detection (MPS/CUDA/CPU)
+│       ├── config.py        # Configuration management
+│       ├── geo.py           # Geospatial utilities
+│       └── visualization.py # Plotting functions
+│
+├── scripts/                 # Entry point scripts
+│   ├── download_marida.py   # Dataset setup
+│   ├── train.py             # Training script
+│   ├── predict.py           # Inference script
+│   └── evaluate.py          # Evaluation script
+│
+├── data/                    # Data directory
+│   └── marida/              # MARIDA dataset (user-provided)
+│
+├── outputs/                 # Output directory
+│   ├── models/              # Saved model weights
+│   ├── predictions/         # Prediction outputs
+│   └── logs/                # Training logs
+│
+├── tests/                   # Unit tests
+└── notebooks/               # Jupyter notebooks
+```
+
+---
+
+## Output Formats
 
 ### 1. Probability Heatmap (GeoTIFF)
+
+Georeferenced probability map with values 0-1 indicating debris likelihood:
 ```
 outputs/predictions/scene_name_heatmap.tif
 ```
-- Georeferenced probability map (0-1)
-- Same CRS as input imagery
-- Viewable in QGIS, ArcGIS, Google Earth
 
 ### 2. Hotspot Polygons (GeoJSON)
-```
-outputs/predictions/scene_name_hotspots.geojson
-```
+
+Vector polygons of detected debris regions with attributes:
 ```json
 {
   "type": "FeatureCollection",
@@ -279,17 +239,17 @@ outputs/predictions/scene_name_hotspots.geojson
       "confidence": 0.87,
       "area_m2": 45000,
       "centroid_lat": 37.7892,
-      "centroid_lon": -122.4324
+      "centroid_lon": -122.4324,
+      "rank": 1
     },
     "geometry": { "type": "Polygon", "coordinates": [...] }
   }]
 }
 ```
 
-### 3. Ranked Hotspot CSV
-```
-outputs/predictions/scene_name_hotspots.csv
-```
+### 3. Ranked Hotspot Report (CSV)
+
+Tabular summary for prioritizing cleanup operations:
 ```csv
 rank,latitude,longitude,area_m2,confidence,timestamp
 1,37.7892,-122.4324,45000,0.87,2024-01-15T10:30:00Z
@@ -298,31 +258,61 @@ rank,latitude,longitude,area_m2,confidence,timestamp
 
 ---
 
-## 🍎 Apple Silicon Optimization
+## Configuration
 
-This code automatically uses **MPS (Metal Performance Shaders)** on Apple Silicon:
+All parameters are configured in `config.yaml`:
 
-```python
-# Automatic device selection in code
-device = (
-    "mps" if torch.backends.mps.is_available() 
-    else "cuda" if torch.cuda.is_available() 
-    else "cpu"
-)
+```yaml
+# Model settings
+model:
+  backbone: "mit_b2"      # SegFormer variant
+  num_classes: 2          # Binary classification
+  in_channels: 6          # Sentinel-2 bands
+
+# Training settings
+training:
+  epochs: 100
+  batch_size: 8
+  learning_rate: 0.0001
+  loss:
+    type: "combined"      # Cross-entropy + Dice
+    ce_weight: 0.5
+    dice_weight: 0.5
+
+# Inference settings
+inference:
+  confidence_threshold: 0.5
+  min_area_m2: 10000      # Minimum debris area
 ```
-
-**Performance tips for M4 Max:**
-- Batch size 8-16 works well
-- Mixed precision training is supported
-- ~2-3x faster than CPU-only
 
 ---
 
-## 🔬 API Usage (For Developers)
+## Model Architecture
+
+The system uses SegFormer (Xie et al., 2021), a transformer-based semantic segmentation architecture, adapted for 6-band multispectral input:
+
+- **Backbone**: Mix Transformer (MiT-B2)
+- **Input**: 6 Sentinel-2 bands at 10m resolution
+- **Output**: 2-class segmentation (debris vs. non-debris)
+- **Modification**: First projection layer adapted for N-band input
+
+### Sentinel-2 Bands Used
+
+| Band | Name | Wavelength | Resolution | Purpose |
+|------|------|------------|------------|---------|
+| B2 | Blue | 490nm | 10m | Water penetration |
+| B3 | Green | 560nm | 10m | Debris detection |
+| B4 | Red | 665nm | 10m | Debris detection |
+| B8 | NIR | 842nm | 10m | Vegetation/debris separation |
+| B11 | SWIR1 | 1610nm | 20m | Material discrimination |
+| B12 | SWIR2 | 2190nm | 20m | Material discrimination |
+
+---
+
+## API Usage
 
 ```python
 from src.inference import MarineDebrisPredictor
-from src.data import load_sentinel2_scene
 
 # Initialize predictor
 predictor = MarineDebrisPredictor(
@@ -330,63 +320,93 @@ predictor = MarineDebrisPredictor(
     device="mps"  # or "cuda", "cpu"
 )
 
-# Load and predict
-scene = load_sentinel2_scene("path/to/scene.tif")
-results = predictor.predict(scene)
+# Run prediction
+results = predictor.predict(
+    image_path="path/to/scene.tif",
+    output_dir="outputs/predictions/"
+)
 
 # Access results
 heatmap = results["probability_map"]      # numpy array
 hotspots = results["hotspots"]            # GeoDataFrame
-metadata = results["metadata"]            # dict
-
-# Save outputs
-predictor.save_results(results, "outputs/predictions/")
+metadata = results["metadata"]            # dict with CRS, transform
 ```
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run all tests
 pytest tests/ -v
 
-# Run with coverage
+# Run with coverage report
 pytest tests/ --cov=src --cov-report=html
 ```
 
 ---
 
-## 📚 References
+## Performance Considerations
 
-- [MARIDA Dataset Paper](https://arxiv.org/abs/2110.01975)
-- [SegFormer Paper](https://arxiv.org/abs/2105.15203)
-- [Sentinel-2 User Guide](https://sentinel.esa.int/web/sentinel/user-guides/sentinel-2-msi)
+### Apple Silicon (M4 Max)
 
----
+The code automatically detects and uses MPS acceleration:
 
-## 🤝 Contributing
+```python
+# Automatic device selection
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+```
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Recommended settings for M4 Max:
+- Batch size: 8-16
+- Number of workers: 4
 
----
+### NVIDIA GPU
 
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file.
+For CUDA-enabled systems, the code will automatically use GPU acceleration.
 
 ---
 
-## 🙏 Acknowledgments
+## Citation
 
-- MARIDA dataset creators
-- European Space Agency (Sentinel-2 data)
-- Hugging Face (SegFormer implementation)
+If you use this work or the MARIDA dataset, please cite:
+
+```bibtex
+@article{kikaki2022marida,
+  title={MARIDA: A benchmark for Marine Debris detection from Sentinel-2 remote sensing data},
+  author={Kikaki, Katerina and Kakogeorgiou, Ioannis and Mikeli, Paraskevi and Raitsos, Dionysios E and Karantzalos, Konstantinos},
+  journal={PLoS ONE},
+  volume={17},
+  number={1},
+  pages={e0262247},
+  year={2022},
+  publisher={Public Library of Science}
+}
+
+@inproceedings{xie2021segformer,
+  title={SegFormer: Simple and efficient design for semantic segmentation with transformers},
+  author={Xie, Enze and Wang, Wenhai and Yu, Zhiding and Anandkumar, Anima and Alvarez, Jose M and Luo, Ping},
+  booktitle={Advances in Neural Information Processing Systems},
+  year={2021}
+}
+```
 
 ---
 
-*Built for the Presidential AI Challenge — Protecting Our Oceans with AI* 🌊
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+## Acknowledgments
+
+- MARIDA dataset creators (Kikaki et al.)
+- European Space Agency for Sentinel-2 data
+- Hugging Face for transformer implementations
+
+---
+
+## Contact
+
+For questions or issues, please open a GitHub issue or contact the development team.

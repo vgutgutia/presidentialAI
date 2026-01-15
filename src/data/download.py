@@ -1,188 +1,161 @@
 """
 Data download utilities for MARIDA dataset and Sentinel-2 imagery.
+
+Note: The MARIDA dataset must be downloaded manually from GitHub
+due to access restrictions. This module provides helper functions
+for verification and sample data creation.
 """
 
 import os
-import zipfile
-import tarfile
-import shutil
 from pathlib import Path
 from typing import Optional, List, Tuple
-from urllib.parse import urlparse
-import hashlib
-
-import requests
-from tqdm import tqdm
+import numpy as np
 
 
-# MARIDA dataset download info
-MARIDA_URLS = {
-    "patches": "https://zenodo.org/record/5151941/files/patches.zip",
-    "masks": "https://zenodo.org/record/5151941/files/masks.zip",
-    "splits": "https://zenodo.org/record/5151941/files/splits.zip",
-}
-
-MARIDA_GITHUB = "https://github.com/marine-debris/marine-debris.github.io"
-
-
-def download_file(
-    url: str,
-    output_path: str,
-    chunk_size: int = 8192,
-    show_progress: bool = True,
-) -> str:
+def create_sample_data(output_dir: str = "data/sample") -> str:
     """
-    Download a file from URL with progress bar.
+    Create sample synthetic data for testing the pipeline.
+    
+    This creates realistic-looking synthetic Sentinel-2 imagery
+    and corresponding labels for testing without the full MARIDA dataset.
     
     Args:
-        url: URL to download
-        output_path: Path to save file
-        chunk_size: Download chunk size
-        show_progress: Whether to show progress bar
+        output_dir: Directory to save sample data
         
     Returns:
-        Path to downloaded file
+        Path to sample data directory
     """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    import rasterio
+    from rasterio.crs import CRS
+    from rasterio.transform import from_bounds
     
-    # Get file size
-    response = requests.head(url, allow_redirects=True)
-    total_size = int(response.headers.get("content-length", 0))
-    
-    # Download
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    
-    with open(output_path, "wb") as f:
-        if show_progress and total_size:
-            pbar = tqdm(
-                total=total_size,
-                unit="B",
-                unit_scale=True,
-                desc=output_path.name,
-            )
-        
-        for chunk in response.iter_content(chunk_size=chunk_size):
-            if chunk:
-                f.write(chunk)
-                if show_progress and total_size:
-                    pbar.update(len(chunk))
-        
-        if show_progress and total_size:
-            pbar.close()
-    
-    return str(output_path)
-
-
-def extract_archive(
-    archive_path: str,
-    output_dir: str,
-    remove_archive: bool = False,
-) -> str:
-    """
-    Extract a zip or tar archive.
-    
-    Args:
-        archive_path: Path to archive file
-        output_dir: Directory to extract to
-        remove_archive: Whether to delete archive after extraction
-        
-    Returns:
-        Path to extracted directory
-    """
-    archive_path = Path(archive_path)
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    patches_dir = output_dir / "patches" / "S2_SAMPLE_SCENE"
+    splits_dir = output_dir / "splits"
     
-    print(f"Extracting {archive_path.name}...")
+    patches_dir.mkdir(parents=True, exist_ok=True)
+    splits_dir.mkdir(parents=True, exist_ok=True)
     
-    if archive_path.suffix == ".zip":
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(output_dir)
-    elif archive_path.suffix in [".tar", ".gz", ".tgz"]:
-        with tarfile.open(archive_path, "r:*") as tf:
-            tf.extractall(output_dir)
-    else:
-        raise ValueError(f"Unsupported archive format: {archive_path.suffix}")
+    # Create multiple sample patches
+    np.random.seed(42)
+    num_patches = 10
+    height, width = 256, 256
+    n_bands = 12  # Sentinel-2 has 12 bands in MARIDA
     
-    if remove_archive:
-        archive_path.unlink()
+    patch_ids = []
     
-    return str(output_dir)
-
-
-def download_marida(
-    output_dir: str = "data/marida",
-    force_download: bool = False,
-) -> str:
-    """
-    Download the MARIDA dataset.
-    
-    The MARIDA dataset contains Sentinel-2 imagery patches with pixel-level
-    annotations for marine debris detection.
-    
-    Args:
-        output_dir: Directory to save dataset
-        force_download: Re-download even if exists
+    for i in range(num_patches):
+        patch_id = f"S2_SAMPLE_SCENE_{i}"
+        patch_ids.append(patch_id)
         
-    Returns:
-        Path to dataset directory
-    """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Check if already downloaded
-    if (output_dir / "patches").exists() and not force_download:
-        print(f"MARIDA dataset already exists at {output_dir}")
-        return str(output_dir)
-    
-    print("=" * 60)
-    print("Downloading MARIDA Dataset")
-    print("=" * 60)
-    print(f"This dataset is hosted on Zenodo and GitHub.")
-    print(f"Please cite: Kikaki et al. (2022) - MARIDA dataset")
-    print("=" * 60)
-    
-    temp_dir = output_dir / "temp"
-    temp_dir.mkdir(exist_ok=True)
-    
-    try:
-        # Download each component
-        for name, url in MARIDA_URLS.items():
-            print(f"\nDownloading {name}...")
+        # Create synthetic 12-band image (realistic water/debris values)
+        # Water has low reflectance, debris has higher reflectance
+        image = np.random.uniform(0.01, 0.08, (n_bands, height, width)).astype(np.float32)
+        
+        # Add some "debris" patches with higher reflectance
+        mask = np.zeros((height, width), dtype=np.uint8)
+        
+        num_debris = np.random.randint(0, 5)
+        for _ in range(num_debris):
+            y = np.random.randint(20, height - 40)
+            x = np.random.randint(20, width - 40)
+            size_h = np.random.randint(10, 40)
+            size_w = np.random.randint(10, 40)
             
-            archive_path = temp_dir / f"{name}.zip"
+            # Debris has higher reflectance in visible and NIR bands
+            debris_signature = np.random.uniform(0.1, 0.25, (n_bands, 1, 1))
+            image[:, y:y+size_h, x:x+size_w] += debris_signature
             
-            try:
-                download_file(url, str(archive_path))
-                extract_archive(str(archive_path), str(output_dir), remove_archive=True)
-            except Exception as e:
-                print(f"Failed to download from Zenodo: {e}")
-                print("Please download manually from:")
-                print(f"  {url}")
-                print(f"  or from GitHub: {MARIDA_GITHUB}")
+            # Mark in mask (class 0 = Marine Debris in MARIDA)
+            mask[y:y+size_h, x:x+size_w] = 0  # Will be converted to 1 for debris
         
-        # Clean up
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
+        # Set non-debris areas to a background class (e.g., 6 = Marine Water)
+        mask[mask == 0] = 6  # Marine Water
         
-        print(f"\nMARIDA dataset downloaded to: {output_dir}")
+        # Now set debris regions
+        for _ in range(num_debris):
+            y = np.random.randint(20, height - 40)
+            x = np.random.randint(20, width - 40)
+            size_h = np.random.randint(10, 40)
+            size_w = np.random.randint(10, 40)
+            mask[y:y+size_h, x:x+size_w] = 0  # Marine Debris
         
-        # Verify structure
-        expected_dirs = ["patches", "masks"]
-        for d in expected_dirs:
-            if not (output_dir / d).exists():
-                print(f"Warning: Expected directory '{d}' not found.")
-                print("Dataset structure may differ. Check manually.")
+        image = np.clip(image, 0, 1)
         
-    except Exception as e:
-        print(f"\nError downloading MARIDA: {e}")
-        print("\nAlternative download instructions:")
-        print("1. Visit: https://zenodo.org/record/5151941")
-        print("2. Download patches.zip and masks.zip")
-        print(f"3. Extract to: {output_dir}")
-        raise
+        # Create geotransform (sample coordinates)
+        transform = from_bounds(
+            -122.5 + i * 0.01, 37.5, -122.4 + i * 0.01, 37.6, 
+            width, height
+        )
+        
+        profile = {
+            "driver": "GTiff",
+            "dtype": np.float32,
+            "width": width,
+            "height": height,
+            "count": n_bands,
+            "crs": CRS.from_epsg(4326),
+            "transform": transform,
+        }
+        
+        # Save image
+        image_path = patches_dir / f"{patch_id}.tif"
+        with rasterio.open(image_path, "w", **profile) as dst:
+            dst.write(image)
+        
+        # Save label (with _cl suffix per MARIDA convention)
+        label_path = patches_dir / f"{patch_id}_cl.tif"
+        profile.update({"count": 1, "dtype": np.uint8})
+        with rasterio.open(label_path, "w", **profile) as dst:
+            dst.write(mask, 1)
+    
+    # Create split files
+    np.random.shuffle(patch_ids)
+    n_train = int(0.7 * num_patches)
+    n_val = int(0.15 * num_patches)
+    
+    train_ids = patch_ids[:n_train]
+    val_ids = patch_ids[n_train:n_train + n_val]
+    test_ids = patch_ids[n_train + n_val:]
+    
+    # Ensure at least one sample per split
+    if len(train_ids) == 0:
+        train_ids = patch_ids[:1]
+    if len(val_ids) == 0:
+        val_ids = patch_ids[:1]
+    if len(test_ids) == 0:
+        test_ids = patch_ids[:1]
+    
+    with open(splits_dir / "train.txt", "w") as f:
+        f.write("\n".join(train_ids))
+    with open(splits_dir / "val.txt", "w") as f:
+        f.write("\n".join(val_ids))
+    with open(splits_dir / "test.txt", "w") as f:
+        f.write("\n".join(test_ids))
+    
+    # Create labels_mapping.txt
+    labels_mapping = """0: Marine Debris
+1: Dense Sargassum
+2: Sparse Sargassum
+3: Natural Organic Material
+4: Ship
+5: Clouds
+6: Marine Water
+7: Sediment-Laden Water
+8: Foam
+9: Turbid Water
+10: Shallow Water
+11: Waves
+12: Cloud Shadows
+13: Wakes
+14: Mixed Water
+"""
+    with open(output_dir / "labels_mapping.txt", "w") as f:
+        f.write(labels_mapping)
+    
+    print(f"Sample data created at: {output_dir}")
+    print(f"  - {num_patches} patches")
+    print(f"  - Train: {len(train_ids)}, Val: {len(val_ids)}, Test: {len(test_ids)}")
     
     return str(output_dir)
 
@@ -192,10 +165,12 @@ def download_sentinel2_scene(
     date_range: Tuple[str, str],
     output_dir: str = "data/raw",
     max_cloud_cover: float = 20.0,
-    bands: List[str] = None,
+    bands: Optional[List[str]] = None,
 ) -> Optional[str]:
     """
     Download a Sentinel-2 scene from Microsoft Planetary Computer.
+    
+    Note: Requires additional packages: pystac-client, planetary-computer, stackstac
     
     Args:
         bbox: Bounding box (west, south, east, north) in WGS84
@@ -205,7 +180,7 @@ def download_sentinel2_scene(
         bands: List of bands to download
         
     Returns:
-        Path to downloaded scene, or None if no scene found
+        Path to downloaded scene, or None if failed
     """
     bands = bands or ["B02", "B03", "B04", "B08", "B11", "B12"]
     output_dir = Path(output_dir)
@@ -220,6 +195,9 @@ def download_sentinel2_scene(
         from pystac_client import Client
         import planetary_computer as pc
         import stackstac
+        import rasterio
+        from rasterio.crs import CRS
+        from rasterio.transform import from_bounds
         
         # Connect to Planetary Computer
         catalog = Client.open(
@@ -266,11 +244,6 @@ def download_sentinel2_scene(
         # Save as GeoTIFF
         output_path = output_dir / f"{item.id}.tif"
         
-        # Convert to numpy and save
-        import rasterio
-        from rasterio.crs import CRS
-        from rasterio.transform import from_bounds
-        
         arr = result.values[0]  # Remove time dimension
         
         transform = from_bounds(*bbox, arr.shape[2], arr.shape[1])
@@ -292,8 +265,8 @@ def download_sentinel2_scene(
         print(f"Saved to: {output_path}")
         return str(output_path)
         
-    except ImportError:
-        print("Required packages not installed for Planetary Computer access.")
+    except ImportError as e:
+        print(f"Required packages not installed: {e}")
         print("Install with: pip install pystac-client planetary-computer stackstac")
         return None
     except Exception as e:
@@ -301,71 +274,67 @@ def download_sentinel2_scene(
         return None
 
 
-def create_sample_data(output_dir: str = "data/sample") -> str:
+def verify_marida_dataset(data_dir: str) -> bool:
     """
-    Create sample synthetic data for testing.
+    Verify MARIDA dataset structure and contents.
     
     Args:
-        output_dir: Directory to save sample data
+        data_dir: Path to MARIDA dataset directory
         
     Returns:
-        Path to sample data directory
+        True if dataset is valid, False otherwise
     """
-    import numpy as np
-    import rasterio
-    from rasterio.crs import CRS
-    from rasterio.transform import from_bounds
+    data_dir = Path(data_dir)
     
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    required_items = [
+        ("patches", "directory"),
+        ("splits", "directory"),
+    ]
     
-    # Create synthetic 6-band image
-    np.random.seed(42)
-    height, width = 512, 512
-    n_bands = 6
+    optional_items = [
+        ("labels_mapping.txt", "file"),
+        ("shapefiles", "directory"),
+    ]
     
-    # Base water reflectance
-    image = np.random.uniform(0.02, 0.1, (n_bands, height, width)).astype(np.float32)
+    print(f"Verifying MARIDA dataset at: {data_dir}")
+    print("-" * 50)
     
-    # Add some "debris" patches
-    for _ in range(5):
-        y = np.random.randint(50, height - 50)
-        x = np.random.randint(50, width - 50)
-        size = np.random.randint(10, 30)
+    all_ok = True
+    
+    for name, item_type in required_items:
+        path = data_dir / name
+        if item_type == "directory":
+            exists = path.is_dir()
+        else:
+            exists = path.is_file()
         
-        # Debris has higher reflectance in certain bands
-        image[:, y:y+size, x:x+size] += np.random.uniform(0.1, 0.3)
+        status = "[OK]" if exists else "[MISSING]"
+        print(f"  {status} {name} ({item_type})")
+        
+        if not exists:
+            all_ok = False
     
-    image = np.clip(image, 0, 1)
+    for name, item_type in optional_items:
+        path = data_dir / name
+        if item_type == "directory":
+            exists = path.is_dir()
+        else:
+            exists = path.is_file()
+        
+        status = "[OK]" if exists else "[OPTIONAL]"
+        print(f"  {status} {name} ({item_type})")
     
-    # Create mask
-    mask = np.zeros((height, width), dtype=np.uint8)
-    # Mark debris locations
-    mask[image[3] > 0.25] = 1  # Use NIR band threshold
+    # Check patches content
+    patches_dir = data_dir / "patches"
+    if patches_dir.exists():
+        image_files = list(patches_dir.glob("**/*.tif"))
+        label_files = [f for f in image_files if "_cl.tif" in f.name]
+        image_files = [f for f in image_files if "_cl.tif" not in f.name]
+        
+        print(f"\n  Image patches: {len(image_files)}")
+        print(f"  Label patches: {len(label_files)}")
     
-    # Save image
-    image_path = output_dir / "sample_scene.tif"
-    transform = from_bounds(-122.5, 37.5, -122.0, 38.0, width, height)
+    print("-" * 50)
+    print(f"Dataset valid: {all_ok}")
     
-    profile = {
-        "driver": "GTiff",
-        "dtype": np.float32,
-        "width": width,
-        "height": height,
-        "count": n_bands,
-        "crs": CRS.from_epsg(4326),
-        "transform": transform,
-    }
-    
-    with rasterio.open(image_path, "w", **profile) as dst:
-        dst.write(image)
-    
-    # Save mask
-    mask_path = output_dir / "sample_mask.tif"
-    profile.update({"count": 1, "dtype": np.uint8})
-    
-    with rasterio.open(mask_path, "w", **profile) as dst:
-        dst.write(mask, 1)
-    
-    print(f"Sample data created at: {output_dir}")
-    return str(output_dir)
+    return all_ok

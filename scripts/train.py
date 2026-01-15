@@ -84,7 +84,7 @@ def main():
     
     # Print header
     print("\n" + "=" * 60)
-    print("🌊 MARINE DEBRIS DETECTION - TRAINING")
+    print("MARINE DEBRIS DETECTION - TRAINING")
     print("=" * 60)
     
     # Print device info
@@ -162,6 +162,9 @@ def main():
     print(f"Batch size: {batch_size}")
     print(f"Num workers: {num_workers}")
     
+    # Variable to store detected channels
+    detected_channels = None
+    
     try:
         train_loader, val_loader, test_loader = create_dataloaders(
             data_dir=str(data_dir),
@@ -176,6 +179,12 @@ def main():
         print(f"Training samples: {len(train_loader.dataset)}")
         print(f"Validation samples: {len(val_loader.dataset)}")
         print(f"Test samples: {len(test_loader.dataset)}")
+        
+        # Auto-detect number of input channels from first sample
+        if len(train_loader.dataset) > 0:
+            sample = train_loader.dataset[0]
+            detected_channels = sample["image"].shape[0]
+            print(f"Detected input channels: {detected_channels}")
         
     except Exception as e:
         print(f"\n[ERROR] Failed to load data: {e}")
@@ -197,7 +206,12 @@ def main():
     
     # Model configuration
     model_config = config.get("model", {})
-    model_config["in_channels"] = len(bands)
+    
+    # Use detected channels from data, fallback to config
+    if detected_channels is not None:
+        model_config["in_channels"] = detected_channels
+    else:
+        model_config["in_channels"] = model_config.get("in_channels", len(bands))
     
     print(f"Backbone: {model_config.get('backbone', 'mit_b2')}")
     print(f"Input channels: {model_config['in_channels']}")
@@ -249,7 +263,7 @@ def main():
         )
         
         print("\n" + "=" * 60)
-        print("✅ TRAINING COMPLETE")
+        print("TRAINING COMPLETE")
         print("=" * 60)
         print(f"\nBest validation IoU: {trainer.best_metric:.4f}")
         print(f"\nSaved models:")

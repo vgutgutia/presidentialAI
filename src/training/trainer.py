@@ -346,7 +346,7 @@ def create_augmentations(config: Dict) -> Any:
     if config.get("gaussian_noise", 0) > 0:
         transforms.append(
             A.GaussNoise(
-                var_limit=(0, config.get("gaussian_noise", 0.1) * 255),
+                std_range=(0, config.get("gaussian_noise", 0.1)),
                 p=0.3,
             )
         )
