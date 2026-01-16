@@ -32,9 +32,11 @@ from src.data.preprocessing import normalize_bands
 class MaridaDataset(Dataset):
     """
     PyTorch Dataset for the MARIDA (Marine Debris Archive) dataset.
+    
+    Features oversampling of debris-containing patches to handle extreme
+    class imbalance.
     """
     
-    # MARIDA class mapping
     CLASS_MAPPING = {
         1: "Marine Debris",
         2: "Dense Sargassum", 
@@ -60,7 +62,9 @@ class MaridaDataset(Dataset):
         transform: Optional[Callable] = None,
         binary: bool = True,
         normalization: Optional[Dict[str, List[float]]] = None,
-        target_channels: int = 11,  # Expected number of channels
+        target_channels: int = 11,
+        oversample_debris: bool = True,
+        oversample_factor: int = 10,
     ):
         self.root_dir = Path(root_dir)
         self.split = split
@@ -68,28 +72,65 @@ class MaridaDataset(Dataset):
         self.binary = binary
         self.normalization = normalization
         self.target_channels = target_channels
+        self.oversample_debris = oversample_debris and split == "train"
+        self.oversample_factor = oversample_factor
         
-        # Paths
         self.patches_dir = self.root_dir / "patches"
         self.splits_dir = self.root_dir / "splits"
         
-        # Load and validate samples
+        # Load samples
         self.samples = self._load_samples()
+        
+        # Apply oversampling for training
+        if self.oversample_debris and len(self.samples) > 0:
+            self._apply_oversampling()
         
         if len(self.samples) == 0:
             print(f"[WARNING] No samples found for split '{split}'")
     
-    def _load_samples(self) -> List[Dict[str, Any]]:
-        """Load sample paths from split file."""
-        samples = []
+    def _apply_oversampling(self):
+        """Oversample patches that contain debris."""
+        print(f"Checking for debris patches to oversample...")
         
+        debris_samples = []
+        non_debris_samples = []
+        
+        for i, sample in enumerate(self.samples):
+            if sample.get("has_debris"):
+                debris_samples.append(sample)
+            elif sample["label_path"]:
+                # Check if has debris
+                try:
+                    with rasterio.open(sample["label_path"]) as src:
+                        mask = src.read(1)
+                        if np.any(mask == 1):
+                            sample["has_debris"] = True
+                            debris_samples.append(sample)
+                        else:
+                            non_debris_samples.append(sample)
+                except:
+                    non_debris_samples.append(sample)
+            else:
+                non_debris_samples.append(sample)
+        
+        print(f"  Found {len(debris_samples)} debris patches, {len(non_debris_samples)} non-debris")
+        
+        if len(debris_samples) > 0:
+            # Oversample debris patches
+            oversampled = debris_samples * self.oversample_factor
+            self.samples = non_debris_samples + oversampled
+            np.random.shuffle(self.samples)
+            print(f"  After oversampling: {len(self.samples)} total samples")
+    
+    def _load_samples(self) -> List[Dict[str, Any]]:
+        """Load sample paths."""
+        samples = []
         split_file = self.splits_dir / f"{self.split}.txt"
         
         if not split_file.exists():
             print(f"[WARNING] Split file not found: {split_file}")
             return self._load_all_samples_fallback()
         
-        # Read patch IDs from split file
         with open(split_file, "r") as f:
             patch_ids = [line.strip() for line in f if line.strip()]
         
@@ -97,7 +138,7 @@ class MaridaDataset(Dataset):
         
         for patch_id in patch_ids:
             sample = self._find_patch_files(patch_id)
-            if sample is not None:
+            if sample:
                 samples.append(sample)
         
         print(f"  Found {len(samples)} valid samples")
@@ -105,15 +146,9 @@ class MaridaDataset(Dataset):
     
     def _find_patch_files(self, patch_id: str) -> Optional[Dict[str, Any]]:
         """Find image and label files for a patch ID."""
-        # patch_id format: "S2_DATE_ROI_X" 
-        # Scene name is everything except the last _X part
         parts = patch_id.rsplit("_", 1)
-        if len(parts) == 2:
-            scene_name = parts[0]
-        else:
-            scene_name = patch_id
+        scene_name = parts[0] if len(parts) == 2 else patch_id
         
-        # Look for the scene folder
         scene_dir = self.patches_dir / scene_name
         
         if scene_dir.exists():
@@ -121,11 +156,9 @@ class MaridaDataset(Dataset):
             label_path = scene_dir / f"{patch_id}_cl.tif"
             
             if image_path.exists():
-                # Validate the image has correct number of channels
                 try:
                     with rasterio.open(image_path) as src:
-                        n_bands = src.count
-                        if n_bands < 3:  # Skip clearly invalid images
+                        if src.count < 3:
                             return None
                 except:
                     return None
@@ -136,7 +169,7 @@ class MaridaDataset(Dataset):
                     "label_path": str(label_path) if label_path.exists() else None,
                 }
         
-        # Search all scene folders
+        # Search all folders
         for scene_folder in self.patches_dir.iterdir():
             if scene_folder.is_dir():
                 image_path = scene_folder / f"{patch_id}.tif"
@@ -145,8 +178,7 @@ class MaridaDataset(Dataset):
                 if image_path.exists():
                     try:
                         with rasterio.open(image_path) as src:
-                            n_bands = src.count
-                            if n_bands < 3:
+                            if src.count < 3:
                                 continue
                     except:
                         continue
@@ -160,28 +192,23 @@ class MaridaDataset(Dataset):
         return None
     
     def _load_all_samples_fallback(self) -> List[Dict[str, Any]]:
-        """Fallback: load all patches from directory structure."""
+        """Fallback: load all patches."""
         samples = []
         
         if not self.patches_dir.exists():
-            print(f"[ERROR] Patches directory not found: {self.patches_dir}")
             return samples
         
-        # Iterate through scene folders
         for scene_dir in sorted(self.patches_dir.iterdir()):
             if not scene_dir.is_dir():
                 continue
             
-            # Find all image patches (files without _cl suffix)
             for tif_file in sorted(scene_dir.glob("*.tif")):
                 if "_cl" in tif_file.name:
                     continue
                 
-                # Validate image
                 try:
                     with rasterio.open(tif_file) as src:
-                        n_bands = src.count
-                        if n_bands < 3:
+                        if src.count < 3:
                             continue
                 except:
                     continue
@@ -194,7 +221,7 @@ class MaridaDataset(Dataset):
                     "label_path": str(label_file) if label_file.exists() else None,
                 })
         
-        # Split samples
+        # Split
         np.random.seed(42)
         indices = np.random.permutation(len(samples))
         
@@ -224,14 +251,12 @@ class MaridaDataset(Dataset):
             image = src.read().astype(np.float32)
             n_bands = src.count
         
-        # Ensure consistent number of channels
+        # Ensure consistent channels
         if n_bands < self.target_channels:
-            # Pad with zeros
             padded = np.zeros((self.target_channels, image.shape[1], image.shape[2]), dtype=np.float32)
             padded[:n_bands] = image
             image = padded
         elif n_bands > self.target_channels:
-            # Truncate
             image = image[:self.target_channels]
         
         # Load label
@@ -261,15 +286,10 @@ class MaridaDataset(Dataset):
             image = np.transpose(transformed["image"], (2, 0, 1))
             mask = transformed["mask"]
         
-        # Convert to tensors
         image = torch.from_numpy(image.copy()).float()
         mask = torch.from_numpy(mask.copy()).long()
         
-        return {
-            "image": image,
-            "mask": mask,
-            "id": sample["id"],
-        }
+        return {"image": image, "mask": mask, "id": sample["id"]}
 
 
 class Sentinel2Dataset(Dataset):
@@ -369,6 +389,8 @@ def create_dataloaders(
         transform=transform_train,
         normalization=normalization,
         target_channels=target_channels,
+        oversample_debris=True,
+        oversample_factor=10,
     )
     
     val_dataset = MaridaDataset(
@@ -377,6 +399,7 @@ def create_dataloaders(
         transform=transform_val,
         normalization=normalization,
         target_channels=target_channels,
+        oversample_debris=False,
     )
     
     test_dataset = MaridaDataset(
@@ -385,6 +408,7 @@ def create_dataloaders(
         transform=transform_val,
         normalization=normalization,
         target_channels=target_channels,
+        oversample_debris=False,
     )
     
     train_loader = torch.utils.data.DataLoader(
@@ -392,7 +416,7 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,
         drop_last=True if len(train_dataset) > batch_size else False,
     )
     
@@ -401,7 +425,7 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,
     )
     
     test_loader = torch.utils.data.DataLoader(
@@ -409,7 +433,7 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,
     )
     
     return train_loader, val_loader, test_loader

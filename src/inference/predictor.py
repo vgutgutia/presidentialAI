@@ -85,6 +85,23 @@ class MarineDebrisPredictor:
     def _load_model(self, model_path: str) -> torch.nn.Module:
         """Load model from checkpoint."""
         model_config = self.config.get("model", {})
+        
+        # Detect input channels from checkpoint
+        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        if "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        else:
+            state_dict = checkpoint
+        
+        # Get input channels from first conv layer
+        for key in state_dict:
+            if "patch_embed1.proj.weight" in key:
+                model_config["in_channels"] = state_dict[key].shape[1]
+                print(f"Detected input channels: {model_config['in_channels']}")
+                break
+        else:
+            model_config["in_channels"] = 11  # Default for MARIDA
+        
         model = load_model(model_path, model_config, device=self.device)
         return model
     

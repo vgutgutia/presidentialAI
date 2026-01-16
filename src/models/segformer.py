@@ -329,7 +329,8 @@ def load_model(
     """
     model = create_model(config, device=None)
     
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    # weights_only=False needed for checkpoints with numpy arrays
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     
     if "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])

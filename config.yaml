@@ -97,15 +97,14 @@ training:
   
   # Learning rate scheduler
   scheduler: "cosine"
-  warmup_epochs: 5
-  min_lr: 0.000001
+  warmup_epochs: 10
+  min_lr: 0.0000001
   
-  # Loss function
+  # Loss function - Focal Loss for extreme class imbalance
   loss:
-    type: "combined"  # "ce", "dice", "combined"
-    ce_weight: 0.5
-    dice_weight: 0.5
-    class_weights: [0.3, 0.7]  # [background, debris] - handle imbalance
+    type: "focal"
+    alpha: 0.95  # Weight for debris class (95% focus on debris)
+    gamma: 3.0   # Focus more on hard examples
   
   # Augmentation
   augmentation:
@@ -157,7 +156,7 @@ evaluation:
     - "precision"
     - "recall"
     - "f1"
-  threshold: 0.5
+  threshold: 0.3  # Lower threshold since debris is rare
 
 # Logging configuration
 logging:

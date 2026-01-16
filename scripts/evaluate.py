@@ -69,6 +69,10 @@ def main():
         "--visualize", action="store_true",
         help="Generate visualization plots",
     )
+    parser.add_argument(
+        "--threshold", type=float, default=0.3,
+        help="Probability threshold for debris detection (default: 0.3)",
+    )
     
     args = parser.parse_args()
     
@@ -106,9 +110,23 @@ def main():
         "std": [0.0276, 0.0267, 0.0308, 0.0522, 0.0560, 0.0479],
     })
     
-    # Model configuration
+    # Model configuration - detect in_channels from checkpoint
     model_config = config.get("model", {})
-    model_config["in_channels"] = len(bands)
+    
+    # Load checkpoint to detect input channels
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    if "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+    else:
+        state_dict = checkpoint
+    
+    # Detect input channels from first conv layer
+    for key in state_dict:
+        if "patch_embed1.proj.weight" in key:
+            model_config["in_channels"] = state_dict[key].shape[1]
+            break
+    else:
+        model_config["in_channels"] = 11  # Default to 11 for MARIDA
     
     print(f"\nModel: {model_path}")
     print(f"Dataset: {data_dir}")
@@ -124,9 +142,9 @@ def main():
     dataset = MaridaDataset(
         root_dir=str(data_dir),
         split=args.split,
-        bands=bands,
         normalization=normalization,
         transform=None,
+        target_channels=model_config["in_channels"],
     )
     
     dataloader = torch.utils.data.DataLoader(
@@ -142,6 +160,10 @@ def main():
     # Evaluation
     print("\nRunning evaluation...")
     
+    # Get threshold from args
+    threshold = args.threshold
+    print(f"Using threshold: {threshold}")
+    
     metric_tracker = MetricTracker(num_classes=model_config.get("num_classes", 2))
     confusion_matrix = ConfusionMatrix(num_classes=model_config.get("num_classes", 2))
     
@@ -155,7 +177,11 @@ def main():
             
             # Forward pass
             outputs = model(images)
-            predictions = outputs.argmax(dim=1)
+            
+            # Use probability threshold instead of argmax
+            probs = torch.softmax(outputs, dim=1)
+            debris_prob = probs[:, 1]  # Probability of debris class
+            predictions = (debris_prob > threshold).long()
             
             # Update metrics
             metric_tracker.update(outputs, masks)
