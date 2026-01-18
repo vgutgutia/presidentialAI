@@ -251,11 +251,12 @@ class Trainer:
             # Backward pass
             loss.backward()
             
-            # Gradient clipping
-            if self.config.get("grad_clip", 0) > 0:
+            # Gradient clipping (CRITICAL for preventing NaN weights)
+            grad_clip_val = self.config.get("gradient_clip_val", self.config.get("grad_clip", 1.0))
+            if grad_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
-                    self.config["grad_clip"],
+                    grad_clip_val,
                 )
             
             self.optimizer.step()
