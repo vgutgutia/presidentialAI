@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.env.local
+.env.*.local
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Next.js
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Model outputs (large files)
+*.pth
+*.pt
+*.onnx
+*.pkl
+*.joblib
+
+# Keep model config but not weights
+!**/hotspot_detector.json
+
+# Data (too large for git)
+PresidentialAI/data/
+data/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS files
+.DS_Store
+*.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+

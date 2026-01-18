@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+:root {
+  /* Maritime Operations Theme */
+  --bg-primary: #0a1628;
+  --bg-secondary: #132337;
+  --bg-tertiary: #1a3a5c;
+  --border: #1e3a5f;
+  --text-primary: #e8eef4;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-primary: #4a90d9;
+  --accent-light: #7eb8ff;
+  --accent-hover: #5a9fe8;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-primary);
+  color: white;
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Utility classes */
+.glass {
+  background: rgba(19, 35, 55, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-light));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}

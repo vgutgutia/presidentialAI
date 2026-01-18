@@ -1,0 +1,14 @@
+{
+  "debris_fdi_mean": 0.0072334186464688395,
+  "debris_fdi_std": 0.00894403051229649,
+  "debris_nir_mean": 0.05745630776364423,
+  "debris_brightness_mean": 0.05830106460529062,
+  "water_fdi_mean": -0.0030056617688387632,
+  "water_fdi_std": 0.0028941466007381678,
+  "water_nir_mean": 0.015706321224570274,
+  "bg_fdi_mean": NaN,
+  "bg_fdi_std": NaN,
+  "fdi_threshold": 0.0012607434764504433,
+  "nir_threshold": 0.03233276009559631,
+  "combined_threshold": 0.6
+}

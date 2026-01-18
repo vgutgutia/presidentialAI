@@ -1,0 +1,9 @@
+{
+  "debris_fdi_mean": 0.007241587115659385,
+  "debris_nir_ratio": 3.6565271596197837,
+  "debris_brightness": 0.05745630776364423,
+  "water_fdi_mean": -0.0030051767826080322,
+  "water_nir_mean": 0.015713345259428024,
+  "anomaly_zscore_threshold": 2.0,
+  "min_hotspot_pixels": 3
+}

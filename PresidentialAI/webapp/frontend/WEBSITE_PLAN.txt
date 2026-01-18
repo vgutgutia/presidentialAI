@@ -1,0 +1,281 @@
+================================================================================
+                    OCEANGUARD AI - WEBSITE ARCHITECTURE PLAN
+              Marine Debris Early Warning System | Presidential AI Challenge
+================================================================================
+
+THEME: Maritime Operations
+- Deep navy blues (#0a1628, #132337)
+- Crisp white text (#e8eef4)
+- Accent blue (#4a90d9, #7eb8ff)
+- Professional, mission-focused, NOAA/Coast Guard aesthetic
+
+================================================================================
+                                  PAGES
+================================================================================
+
+1. LANDING PAGE (/)
+   ─────────────────
+   Purpose: First impression, explain the mission, call-to-action
+   
+   Sections:
+   - Hero: Bold headline, tagline, "Launch Dashboard" button
+   - Problem Statement: Why marine debris matters
+   - Solution Overview: How AI + satellites solve this
+   - Key Statistics: Impact numbers (debris detected, area monitored, etc.)
+   - Technology Stack: Sentinel-2, SegFormer, real-time detection
+   - Call to Action: Try the demo / Access dashboard
+   - Footer: Credits, Presidential AI Challenge badge
+
+
+2. DASHBOARD (/dashboard)
+   ─────────────────────────
+   Purpose: Main operational interface for debris monitoring
+   
+   Layout:
+   ┌─────────┬────────────────────────────────┬──────────────┐
+   │ Sidebar │        Map View                │   Hotspots   │
+   │         │   (Interactive satellite       │    Panel     │
+   │  Nav    │    imagery with overlays)      │              │
+   │         ├────────────────────────────────┤              │
+   │         │      Statistics Bar            │              │
+   └─────────┴────────────────────────────────┴──────────────┘
+   
+   Components:
+   - Sidebar: Navigation icons (Dashboard, Analyze, History, Reports, Settings)
+   - Map View: Leaflet/Mapbox with satellite tiles, debris heatmap overlay
+   - Statistics Bar: Hotspots count, area scanned, model confidence, alerts
+   - Hotspots Panel: Ranked list of detected debris locations with coordinates
+   - Layer Controls: Toggle satellite view, heatmap, hotspot markers
+
+
+3. ANALYZE / TEST MODEL (/analyze)
+   ─────────────────────────────────
+   Purpose: Let users upload their own satellite imagery and run detection
+   
+   ***THIS IS THE KEY DEMO PAGE***
+   
+   Layout:
+   ┌─────────────────────────────────────────────────────────┐
+   │                    Upload Section                        │
+   │   [ Drag & Drop GeoTIFF ] or [ Use Sample Image ]       │
+   └─────────────────────────────────────────────────────────┘
+   ┌───────────────────────┬─────────────────────────────────┐
+   │   Original Image      │      Detection Results          │
+   │                       │   (Heatmap overlay + mask)      │
+   └───────────────────────┴─────────────────────────────────┘
+   ┌─────────────────────────────────────────────────────────┐
+   │   Results Summary: Hotspots found, confidence scores,   │
+   │   coordinates, area estimates, download options         │
+   └─────────────────────────────────────────────────────────┘
+   
+   Features:
+   - File upload (GeoTIFF, .tif)
+   - "Use Sample" button for demo with pre-loaded MARIDA data
+   - Real-time progress indicator during inference
+   - Side-by-side comparison (input vs output)
+   - Downloadable results (heatmap, GeoJSON, CSV)
+   - Confidence threshold slider
+
+
+4. HISTORY (/history)
+   ────────────────────
+   Purpose: View past analyses and detections
+   
+   Features:
+   - Table/grid of past uploads and results
+   - Filter by date, confidence, location
+   - Re-view any previous analysis
+   - Export batch reports
+
+
+5. ABOUT / METHODOLOGY (/about)
+   ──────────────────────────────
+   Purpose: Explain the science for government reviewers
+   
+   Sections:
+   - The Problem: Marine debris crisis
+   - Our Approach: Satellite + AI solution
+   - Technical Details: SegFormer architecture, Sentinel-2 bands
+   - Dataset: MARIDA benchmark
+   - Performance Metrics: IoU, accuracy, precision/recall
+   - Team / Credits
+   - Presidential AI Challenge context
+
+
+================================================================================
+                              BACKEND / API
+================================================================================
+
+API ROUTES (Next.js API Routes):
+
+1. POST /api/predict
+   - Accepts: GeoTIFF file upload
+   - Returns: { heatmap_url, hotspots: [], metadata }
+   - Calls Python model via subprocess or FastAPI backend
+
+2. GET /api/sample-images
+   - Returns: List of available sample images for demo
+
+3. POST /api/predict-sample
+   - Accepts: { sample_id }
+   - Returns: Pre-computed or live prediction on sample
+
+4. GET /api/stats
+   - Returns: Dashboard statistics (mock or real)
+
+
+PYTHON BACKEND (FastAPI - separate service):
+
+Location: /backend/api.py
+
+Endpoints:
+- POST /predict - Run model inference
+- GET /health - Model status check
+
+Integration:
+- Frontend calls Next.js API routes
+- Next.js proxies to FastAPI backend running on port 8000
+- FastAPI loads the trained model (best_model.pth)
+- Returns predictions as JSON + base64 encoded images
+
+
+================================================================================
+                              FILE STRUCTURE
+================================================================================
+
+frontend/
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx              # Root layout with Maritime theme
+│   │   ├── page.tsx                # Landing page
+│   │   ├── dashboard/
+│   │   │   └── page.tsx            # Main dashboard
+│   │   ├── analyze/
+│   │   │   └── page.tsx            # Model testing page
+│   │   ├── history/
+│   │   │   └── page.tsx            # Past analyses
+│   │   ├── about/
+│   │   │   └── page.tsx            # Methodology
+│   │   └── api/
+│   │       ├── predict/route.ts    # Prediction endpoint
+│   │       ├── sample/route.ts     # Sample images
+│   │       └── stats/route.ts      # Statistics
+│   │
+│   ├── components/
+│   │   ├── layout/
+│   │   │   ├── Navbar.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   └── Footer.tsx
+│   │   ├── dashboard/
+│   │   │   ├── MapView.tsx
+│   │   │   ├── StatsBar.tsx
+│   │   │   └── HotspotsList.tsx
+│   │   ├── analyze/
+│   │   │   ├── FileUpload.tsx
+│   │   │   ├── ImageComparison.tsx
+│   │   │   └── ResultsPanel.tsx
+│   │   └── ui/
+│   │       ├── Button.tsx
+│   │       ├── Card.tsx
+│   │       └── Badge.tsx
+│   │
+│   ├── lib/
+│   │   ├── api.ts                  # API client functions
+│   │   └── utils.ts                # Utility functions
+│   │
+│   └── styles/
+│       └── theme.ts                # Maritime theme constants
+
+backend/
+├── api.py                          # FastAPI server
+├── requirements.txt                # Python dependencies
+└── start.sh                        # Startup script
+
+
+================================================================================
+                              IMPLEMENTATION ORDER
+================================================================================
+
+PHASE 1: Core Structure
+  [x] Theme selection
+  [ ] Maritime theme CSS variables
+  [ ] Root layout with navigation
+  [ ] Landing page
+
+PHASE 2: Dashboard
+  [ ] Sidebar navigation
+  [ ] Map placeholder
+  [ ] Stats bar
+  [ ] Hotspots panel
+
+PHASE 3: Model Integration (CRITICAL)
+  [ ] FastAPI backend setup
+  [ ] /api/predict endpoint
+  [ ] File upload component
+  [ ] Results display
+
+PHASE 4: Analyze Page
+  [ ] Upload interface
+  [ ] Sample image selector
+  [ ] Side-by-side comparison
+  [ ] Download results
+
+PHASE 5: Polish
+  [ ] History page
+  [ ] About page
+  [ ] Loading states
+  [ ] Error handling
+  [ ] Mobile responsiveness
+
+
+================================================================================
+                              DESIGN TOKENS
+================================================================================
+
+MARITIME OPERATIONS THEME:
+
+Colors:
+  --bg-primary:     #0a1628     (Deep navy background)
+  --bg-secondary:   #132337     (Card/surface background)
+  --bg-tertiary:    #1a3a5c     (Hover states)
+  --border:         #1e3a5f     (Subtle borders)
+  --text-primary:   #e8eef4     (Main text - crisp white)
+  --text-secondary: #94a3b8     (Muted text)
+  --accent-primary: #4a90d9     (Primary actions)
+  --accent-light:   #7eb8ff     (Highlights)
+  --success:        #10b981     (Positive indicators)
+  --warning:        #f59e0b     (Caution)
+  --danger:         #ef4444     (Alerts)
+
+Typography:
+  Font: Inter (clean, professional)
+  Headings: 600-700 weight
+  Body: 400 weight
+  Mono: JetBrains Mono (coordinates, data)
+
+Spacing:
+  Base unit: 4px
+  Card padding: 24px
+  Section gaps: 32px
+
+Border Radius:
+  Small: 6px
+  Medium: 12px
+  Large: 16px
+
+
+================================================================================
+                                  NOTES
+================================================================================
+
+- The model is already trained at: PresidentialAI/outputs/models/best_model.pth
+- MARIDA dataset has sample images we can use for demo
+- Model expects 11-band GeoTIFF input
+- Output is binary segmentation (debris vs background)
+- Need to handle large files gracefully (tiling)
+
+PRIORITY: Get the /analyze page working with real model inference
+          This is what will impress the judges!
+
+================================================================================
+
