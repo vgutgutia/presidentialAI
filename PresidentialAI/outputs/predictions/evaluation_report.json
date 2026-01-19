@@ -1,0 +1,35 @@
+{
+  "model": "improved_model.pth",
+  "model_type": "Improved",
+  "device": "mps",
+  "test_samples": 200,
+  "metrics": {
+    "accuracy": 0.6368198394775386,
+    "precision": 0.1886893591667821,
+    "recall": 0.6723835410813717,
+    "f1_score": 0.29468264404645045,
+    "iou": 0.17280223121969837
+  },
+  "confusion_matrix": {
+    "tn": 7352500,
+    "fp": 4275745,
+    "fn": 484530,
+    "tp": 994425
+  },
+  "probability_stats": {
+    "mean": 0.48666948080062866,
+    "max": 0.5504763722419739,
+    "std": 0.0942845568060875
+  },
+  "performance": {
+    "avg_inference_time_ms": 31.49127960205078,
+    "throughput_mpixels_per_sec": 32.016677841839574,
+    "images_per_sec": 488.5357336706478
+  },
+  "checkpoint_info": {
+    "epoch": 8,
+    "val_loss": 0.031602450385689734,
+    "checkpoint_f1": 0.29468264404645045,
+    "checkpoint_iou": 0.17280223121969837
+  }
+}

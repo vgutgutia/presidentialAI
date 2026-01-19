@@ -157,7 +157,7 @@ def create_heatmap_overlay(prob_map: np.ndarray) -> str:
         return None
 
 
-def extract_hotspots(prob_map: np.ndarray, threshold: float = 0.5, min_area: int = 5) -> List[dict]:
+def extract_hotspots(prob_map: np.ndarray, threshold: float = 0.5, min_area: int = 100) -> List[dict]:
     """Extract hotspot regions from probability map."""
     from scipy.ndimage import label, find_objects
     
@@ -170,31 +170,17 @@ def extract_hotspots(prob_map: np.ndarray, threshold: float = 0.5, min_area: int
     hotspots = []
     h, w = prob_map.shape
     
-    if num_features == 0:
-        return hotspots
-    
-    # Get all bounding boxes at once
-    all_slices = find_objects(labeled)
-    
     for i in range(1, num_features + 1):
         mask = (labeled == i)
-        area = int(np.sum(mask))
+        area = np.sum(mask)
         
         if area < min_area:
             continue
         
         # Get bounding box
-        if all_slices is None or i-1 >= len(all_slices) or all_slices[i-1] is None:
-            # Fallback: compute bbox manually
-            coords = np.where(mask)
-            if len(coords[0]) == 0:
-                continue
-            y_min, y_max = int(coords[0].min()), int(coords[0].max()) + 1
-            x_min, x_max = int(coords[1].min()), int(coords[1].max()) + 1
-        else:
-            slices = all_slices[i-1]
-            y_min, y_max = int(slices[0].start), int(slices[0].stop)
-            x_min, x_max = int(slices[1].start), int(slices[1].stop)
+        slices = find_objects(labeled == i)[0]
+        y_min, y_max = slices[0].start, slices[0].stop
+        x_min, x_max = slices[1].start, slices[1].stop
         
         # Center
         cy = (y_min + y_max) // 2
@@ -311,35 +297,17 @@ async def predict(
         
         print(f"Processing image: shape={image.shape}, range=[{image.min():.3f}, {image.max():.3f}]")
         
-        # IMPORTANT: improved_model.pth is now trained on REAL MARIDA data
-        # Use MARIDA normalization stats (matching train_marida.py)
-        marida_mean = np.array([0.05, 0.06, 0.06, 0.05, 0.08, 0.10, 0.11, 0.10, 0.12, 0.13, 0.09], dtype=np.float32)
-        marida_std = np.array([0.03, 0.03, 0.03, 0.03, 0.04, 0.05, 0.05, 0.05, 0.05, 0.06, 0.05], dtype=np.float32)
+        # Normalize image (simple normalization for now)
+        if image.max() > 1.0:
+            image = image / 10000.0  # Sentinel-2 scaling
         
-        # Scale if needed (MARIDA/Sentinel-2 data might be in DN or reflectance)
-        if image.max() > 10.0:
-            image = image / 10000.0  # DN to reflectance
-            print(f"Scaled from DN: new range=[{image.min():.3f}, {image.max():.3f}]")
-        elif image.max() > 1.0:
-            image = image / 1000.0
-            print(f"Scaled: new range=[{image.min():.3f}, {image.max():.3f}]")
-        
-        # Ensure we have 11 channels
-        if image.shape[0] < 11:
-            padding = np.zeros((11 - image.shape[0], *image.shape[1:]), dtype=image.dtype)
+        # Ensure we have 11 channels (pad or select)
+        if image.shape[0] < IN_CHANNELS:
+            # Pad with zeros or duplicate last channel
+            padding = np.zeros((IN_CHANNELS - image.shape[0], *image.shape[1:]), dtype=image.dtype)
             image = np.concatenate([image, padding], axis=0)
-        elif image.shape[0] > 11:
-            image = image[:11]
-        
-        # Normalize each band using MARIDA statistics (exactly as in train_marida.py)
-        for i in range(min(11, image.shape[0])):
-            if i < len(marida_mean) and i < len(marida_std):
-                image[i] = (image[i] - marida_mean[i]) / (marida_std[i] + 1e-8)
-        
-        # Clamp values to prevent extreme outliers (as in train_marida.py)
-        image = np.clip(image, -10.0, 10.0)
-        
-        print(f"After MARIDA normalization: range=[{image.min():.3f}, {image.max():.3f}], mean={image.mean():.3f}, std={image.std():.3f}")
+        elif image.shape[0] > IN_CHANNELS:
+            image = image[:IN_CHANNELS]
         
         # Convert to tensor and add batch dimension
         image_tensor = torch.from_numpy(image).unsqueeze(0).to(DEVICE)
@@ -350,52 +318,13 @@ async def predict(
             probs = F.softmax(output, dim=1)
             debris_probs = probs[0, 1].cpu().numpy()  # Get debris class probabilities
         
-        print(f"Inference complete: prob range=[{debris_probs.min():.4f}, {debris_probs.max():.4f}]")
+        print(f"Inference complete: prob range=[{debris_probs.min():.2f}, {debris_probs.max():.2f}]")
         
-        # Adjust threshold based on sensitivity and actual probability range
-        max_prob = debris_probs.max()
-        mean_prob = debris_probs.mean()
-        median_prob = np.median(debris_probs)
+        # Adjust threshold based on sensitivity (lower sensitivity = higher threshold)
+        threshold = 0.5 + (0.5 - sensitivity) * 0.3  # Range: 0.2 to 0.8
         
-        print(f"Probability stats: min={debris_probs.min():.4f}, max={max_prob:.4f}, mean={mean_prob:.4f}, median={median_prob:.4f}")
-        
-        # For very low probabilities, use percentile-based thresholding
-        # Always use top N% of pixels, regardless of absolute values
-        if max_prob < 0.01:
-            # Very low probabilities - use top 0.5-2% of pixels
-            percentile = 99.5 - (sensitivity * 1.5)  # Range: 98th to 99.5th percentile
-            threshold = np.percentile(debris_probs, percentile)
-            print(f"Very low probabilities detected - using {percentile:.1f}th percentile: {threshold:.6f}")
-        elif max_prob < 0.05:
-            # Low probabilities - use top 1-5% of pixels
-            percentile = 99 - (sensitivity * 4)  # Range: 95th to 99th percentile
-            threshold = np.percentile(debris_probs, percentile)
-            print(f"Low probabilities - using {percentile:.1f}th percentile: {threshold:.6f}")
-        else:
-            # Normal probabilities - use higher threshold to reduce false positives
-            # For high max_prob (>0.7), use even higher threshold
-            if max_prob > 0.7:
-                threshold = 0.65 + (0.8 - sensitivity) * 0.15  # Range: 0.65 to 0.8 (very conservative)
-            else:
-                threshold = 0.5 + (0.7 - sensitivity) * 0.2  # Range: 0.5 to 0.7 (more conservative)
-        
-        # Ensure threshold is reasonable
-        threshold = max(threshold, max_prob * 0.1)  # At least 10% of max
-        threshold = min(threshold, max_prob * 0.9)  # At most 90% of max
-        
-        print(f"Final threshold: {threshold:.6f} (max prob: {max_prob:.4f})")
-        
-        # Count pixels above threshold for debugging
-        pixels_above = (debris_probs >= threshold).sum()
-        print(f"Pixels above threshold: {pixels_above} ({100*pixels_above/debris_probs.size:.2f}%)")
-        
-        # Extract hotspots - use min_area to filter out tiny noise detections
-        # Higher min_area for high-probability cases to reduce over-segmentation
-        if max_prob > 0.7:
-            min_area = 10  # Require at least 10 pixels for high-confidence cases
-        else:
-            min_area = 5   # Require at least 5 pixels for lower-confidence cases
-        hotspots = extract_hotspots(debris_probs, threshold=threshold, min_area=min_area)
+        # Extract hotspots
+        hotspots = extract_hotspots(debris_probs, threshold=threshold, min_area=50)
         
         print(f"Detection complete: {len(hotspots)} hotspots")
         
@@ -404,13 +333,7 @@ async def predict(
         
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         
-        # Calculate confidence from max probability if no hotspots (shouldn't happen, but safety)
-        if hotspots:
-            avg_conf = float(np.mean([h['confidence'] for h in hotspots]))
-        else:
-            # Use max probability as confidence if no hotspots extracted (fallback)
-            avg_conf = float(max_prob * 100)
-            print(f"Warning: No hotspots extracted despite {pixels_above} pixels above threshold. Using max prob as confidence: {avg_conf:.1f}%")
+        avg_conf = float(np.mean([h['confidence'] for h in hotspots])) if hotspots else 0.0
         
         return PredictionResult(
             success=True,
