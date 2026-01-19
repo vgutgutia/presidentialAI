@@ -4,6 +4,9 @@ uvicorn>=0.24.0
 python-multipart>=0.0.6
 pydantic>=2.5.0
 
+# AI Report Generation
+anthropic>=0.40.0
+
 # These are from the main project (should already be installed)
 # torch>=2.1.0
 # numpy>=1.24.0

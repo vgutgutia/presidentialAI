@@ -1,28 +1,22 @@
 """
 OceanGuard AI - Marine Debris Detection API
-Uses trained deep learning model for debris detection
+Uses spectral anomaly detection for hotspot identification
 """
 
 import io
 import base64
 import json
-import sys
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from dataclasses import dataclass, asdict
+
 import numpy as np
-import torch
-import torch.nn.functional as F
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
-
-# Add PresidentialAI to path
-BACKEND_DIR = Path(__file__).parent
-PROJECT_ROOT = BACKEND_DIR.parent
-PRESIDENTIAL_AI_PATH = PROJECT_ROOT / "PresidentialAI"
-sys.path.insert(0, str(PRESIDENTIAL_AI_PATH))
 
 # Try to import ML libraries
 try:
@@ -34,36 +28,220 @@ except ImportError:
     ML_AVAILABLE = False
     print("Warning: ML libraries not available")
 
-# Import model
-try:
-    from scripts.train_improved import ImprovedUNet
-    MODEL_AVAILABLE = True
-except ImportError:
-    MODEL_AVAILABLE = False
-    print("Warning: Model classes not available")
-
 # Paths
-MODEL_PATH = PRESIDENTIAL_AI_PATH / "outputs" / "models" / "improved_model.pth"
-IN_CHANNELS = 11
-NUM_CLASSES = 2
+BACKEND_DIR = Path(__file__).parent
+PROJECT_ROOT = BACKEND_DIR.parent
+PRESIDENTIAL_AI_PATH = PROJECT_ROOT / "PresidentialAI"
+MODEL_PATH = PRESIDENTIAL_AI_PATH / "outputs" / "models" / "hotspot_detector.json"
 
-# Device
-if torch.cuda.is_available():
-    DEVICE = "cuda"
-elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-    DEVICE = "mps"
-else:
-    DEVICE = "cpu"
+# =============================================================================
+# MODEL DEFINITION (must match training)
+# =============================================================================
+BLUE = 1
+GREEN = 2
+RED = 3
+NIR = 7
+SWIR1 = 9
+SWIR2 = 10
 
-print(f"Using device: {DEVICE}")
+
+def to_python_types(obj):
+    """Convert numpy types to Python native types for JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: to_python_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [to_python_types(v) for v in obj]
+    elif isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
+
+
+@dataclass
+class HotspotDetectorModel:
+    debris_fdi_mean: float = 0.007
+    debris_nir_ratio: float = 1.5
+    debris_brightness: float = 0.05
+    water_fdi_mean: float = -0.003
+    water_nir_mean: float = 0.016
+    anomaly_zscore_threshold: float = 2.0
+    min_hotspot_pixels: int = 3
+    
+    @classmethod
+    def from_dict(cls, d: dict) -> 'HotspotDetectorModel':
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+def compute_debris_indices(image: np.ndarray) -> dict:
+    """Compute spectral indices for debris detection."""
+    if image.shape[0] < 11:
+        padded = np.zeros((11, image.shape[1], image.shape[2]), dtype=np.float32)
+        padded[:image.shape[0]] = image
+        image = padded
+    
+    eps = 1e-8
+    
+    blue = image[BLUE].astype(np.float32)
+    green = image[GREEN].astype(np.float32)
+    red = image[RED].astype(np.float32)
+    nir = image[NIR].astype(np.float32)
+    swir1 = image[SWIR1].astype(np.float32)
+    swir2 = image[SWIR2].astype(np.float32)
+    
+    fdi = nir - (red + (swir1 - red) * 0.178)
+    ndwi = (green - nir) / (green + nir + eps)
+    ndvi = (nir - red) / (nir + red + eps)
+    brightness = (blue + green + red + nir) / 4.0
+    
+    return {
+        'fdi': fdi,
+        'ndwi': ndwi,
+        'ndvi': ndvi,
+        'nir': nir,
+        'brightness': brightness,
+    }
+
+
+def detect_hotspots(image: np.ndarray, model: HotspotDetectorModel, sensitivity: float = 0.5):
+    """
+    Detect debris hotspots using anomaly detection.
+    Returns probability map and list of hotspots.
+    """
+    indices = compute_debris_indices(image)
+    h, w = indices['fdi'].shape
+    
+    # Compute Z-scores (anomalies relative to image)
+    fdi = indices['fdi']
+    fdi_mean, fdi_std = np.mean(fdi), np.std(fdi) + 1e-8
+    fdi_zscore = (fdi - fdi_mean) / fdi_std
+    
+    nir = indices['nir']
+    nir_mean, nir_std = np.mean(nir), np.std(nir) + 1e-8
+    nir_zscore = (nir - nir_mean) / nir_std
+    
+    bright = indices['brightness']
+    bright_mean, bright_std = np.mean(bright), np.std(bright) + 1e-8
+    bright_zscore = (bright - bright_mean) / bright_std
+    
+    # Debug logging
+    print(f"  FDI: mean={fdi_mean:.4f}, std={fdi_std:.4f}, max_z={fdi_zscore.max():.2f}")
+    print(f"  NIR: mean={nir_mean:.4f}, range=[{nir.min():.4f}, {nir.max():.4f}]")
+    print(f"  Brightness: mean={bright_mean:.4f}, max={bright.max():.4f}")
+    
+    # Combined anomaly score - debris appears as bright anomalies in FDI and NIR
+    anomaly_score = (
+        0.5 * np.clip(fdi_zscore, 0, 5) +
+        0.3 * np.clip(nir_zscore, 0, 5) +
+        0.2 * np.clip(bright_zscore, -2, 3)
+    )
+    
+    print(f"  Anomaly score before suppression: max={anomaly_score.max():.2f}")
+    
+    # Suppress non-debris areas (less aggressive now)
+    veg_mask = indices['ndvi'] > 0.35  # Was 0.25
+    anomaly_score[veg_mask] *= 0.2  # Was 0.1
+    
+    deep_water = (indices['ndwi'] > 0.6) & (indices['brightness'] < 0.02)  # More strict
+    anomaly_score[deep_water] *= 0.3  # Was 0.2
+    
+    too_bright = indices['brightness'] > 0.2  # Was 0.12
+    anomaly_score[too_bright] *= 0.5  # Was 0.3
+    
+    print(f"  Anomaly score after suppression: max={anomaly_score.max():.2f}")
+    
+    # Apply spatial smoothing to group nearby anomalies
+    from scipy.ndimage import gaussian_filter
+    anomaly_score = gaussian_filter(anomaly_score, sigma=1.5)
+    
+    # Convert to probability - balanced threshold
+    # Higher sensitivity = lower threshold = more detections
+    base_threshold = 1.8 - sensitivity * 1.0  # Range: 0.8 to 1.8
+    prob_map = 1.0 / (1.0 + np.exp(-(anomaly_score - base_threshold) * 2))
+    
+    # Find hotspots via connected components - balanced threshold
+    detection_threshold = 0.40 + (1 - sensitivity) * 0.25  # Range: 0.40 to 0.65
+    binary = prob_map > detection_threshold
+    
+    print(f"  Detection threshold: {detection_threshold:.2f}, prob max: {prob_map.max():.2f}")
+    
+    # Apply morphological operations to clean up
+    from scipy.ndimage import binary_opening, binary_closing
+    binary = binary_opening(binary, structure=np.ones((2, 2)))
+    binary = binary_closing(binary, structure=np.ones((3, 3)))
+    
+    labeled, n_features = ndimage.label(binary)
+    
+    # Minimum pixels based on sensitivity
+    min_pixels = max(5, int(10 * (1 - sensitivity)))  # 5-10 pixels minimum
+    
+    hotspots = []
+    for i in range(1, n_features + 1):
+        mask = labeled == i
+        n_pixels = np.sum(mask)
+        
+        if n_pixels < min_pixels:
+            continue
+        
+        coords = np.where(mask)
+        cy, cx = np.mean(coords[0]), np.mean(coords[1])
+        
+        max_prob = float(prob_map[mask].max())
+        mean_prob = float(prob_map[mask].mean())
+        
+        # Confidence based on probability, size, and compactness
+        size_factor = min(1.0, n_pixels / 50)  # Larger = more confident
+        compactness = n_pixels / (len(np.unique(coords[0])) * len(np.unique(coords[1])) + 1)
+        compact_factor = min(1.0, compactness * 2)
+        
+        confidence = (
+            0.5 * max_prob +
+            0.25 * mean_prob +
+            0.15 * size_factor +
+            0.1 * compact_factor
+        )
+        
+        # Generate GPS coordinates
+        base_lat, base_lon = 37.77, -122.42
+        lat = base_lat + (cy - h/2) * 0.0001
+        lon = base_lon + (cx - w/2) * 0.0001
+        
+        hotspots.append({
+            'id': int(len(hotspots) + 1),
+            'confidence': round(float(confidence) * 100, 1),
+            'area_m2': int(n_pixels) * 100,
+            'lat': round(float(lat), 4),
+            'lon': round(float(lon), 4),
+            'center_y': int(cy),
+            'center_x': int(cx),
+            'n_pixels': int(n_pixels),
+        })
+    
+    # Sort by confidence and limit to top results
+    hotspots.sort(key=lambda x: x['confidence'], reverse=True)
+    
+    # Limit based on sensitivity (more sensitivity = more results)
+    max_hotspots = int(5 + sensitivity * 15)  # 5-20 hotspots
+    hotspots = hotspots[:max_hotspots]
+    
+    # Assign final ranks
+    for i, h in enumerate(hotspots):
+        h['rank'] = i + 1
+    
+    return prob_map.astype(np.float32), hotspots
+
 
 # =============================================================================
 # API SETUP
 # =============================================================================
 app = FastAPI(
     title="OceanGuard AI API",
-    description="Marine Debris Detection using Deep Learning",
-    version="4.0.0",
+    description="Marine Debris Hotspot Detection using Spectral Anomaly Analysis",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -75,7 +253,7 @@ app.add_middleware(
 )
 
 # Global model
-model: Optional[torch.nn.Module] = None
+model: Optional[HotspotDetectorModel] = None
 
 
 class PredictionResult(BaseModel):
@@ -93,7 +271,6 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     model_type: str
-    device: str
 
 
 # =============================================================================
@@ -102,15 +279,15 @@ class HealthResponse(BaseModel):
 def tif_to_preview_base64(tif_bytes):
     """Convert TIF to PNG for web display."""
     if not ML_AVAILABLE:
-        raise ValueError("rasterio is not installed")
+        raise ValueError("rasterio is not installed. Please install it: pip install rasterio scipy")
     try:
         from rasterio.io import MemoryFile
         with MemoryFile(tif_bytes) as memfile:
             with memfile.open() as src:
                 if src.count >= 3:
-                    r = src.read(4) if src.count >= 4 else src.read(1)
-                    g = src.read(3) if src.count >= 3 else src.read(1)
-                    b = src.read(2) if src.count >= 2 else src.read(1)
+                    r = src.read(4)  # Red
+                    g = src.read(3)  # Green
+                    b = src.read(2)  # Blue
                 else:
                     r = g = b = src.read(1)
                 
@@ -132,100 +309,27 @@ def tif_to_preview_base64(tif_bytes):
         return None
 
 
-def create_heatmap_overlay(prob_map: np.ndarray) -> str:
-    """Create heatmap visualization from probability map."""
+def create_heatmap_overlay(prob_map: np.ndarray):
+    """Create a heatmap visualization."""
     try:
-        # Normalize to 0-255
-        prob_uint8 = (np.clip(prob_map, 0, 1) * 255).astype(np.uint8)
-        
-        # Create colormap (blue to red)
+        import matplotlib
+        matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
         
-        fig, ax = plt.subplots(figsize=(10, 10))
-        im = ax.imshow(prob_uint8, cmap='hot', vmin=0, vmax=255)
-        ax.axis('off')
-        plt.tight_layout(pad=0)
+        # Custom colormap: transparent -> yellow -> orange -> red
+        colors = [(0, 0, 0, 0), (1, 1, 0, 0.4), (1, 0.5, 0, 0.7), (1, 0, 0, 0.9)]
+        cmap = mcolors.LinearSegmentedColormap.from_list('debris', colors)
+        
+        colored = cmap(prob_map)
+        img = Image.fromarray((colored * 255).astype(np.uint8))
         
         buffer = io.BytesIO()
-        plt.savefig(buffer, format='PNG', bbox_inches='tight', pad_inches=0, dpi=100)
-        plt.close()
-        
+        img.save(buffer, format='PNG')
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
     except Exception as e:
         print(f"Heatmap error: {e}")
         return None
-
-
-def extract_hotspots(prob_map: np.ndarray, threshold: float = 0.5, min_area: int = 5) -> List[dict]:
-    """Extract hotspot regions from probability map."""
-    from scipy.ndimage import label, find_objects
-    
-    # Create binary mask
-    binary = (prob_map >= threshold).astype(np.uint8)
-    
-    # Find connected components
-    labeled, num_features = label(binary)
-    
-    hotspots = []
-    h, w = prob_map.shape
-    
-    if num_features == 0:
-        return hotspots
-    
-    # Get all bounding boxes at once
-    all_slices = find_objects(labeled)
-    
-    for i in range(1, num_features + 1):
-        mask = (labeled == i)
-        area = int(np.sum(mask))
-        
-        if area < min_area:
-            continue
-        
-        # Get bounding box
-        if all_slices is None or i-1 >= len(all_slices) or all_slices[i-1] is None:
-            # Fallback: compute bbox manually
-            coords = np.where(mask)
-            if len(coords[0]) == 0:
-                continue
-            y_min, y_max = int(coords[0].min()), int(coords[0].max()) + 1
-            x_min, x_max = int(coords[1].min()), int(coords[1].max()) + 1
-        else:
-            slices = all_slices[i-1]
-            y_min, y_max = int(slices[0].start), int(slices[0].stop)
-            x_min, x_max = int(slices[1].start), int(slices[1].stop)
-        
-        # Center
-        cy = (y_min + y_max) // 2
-        cx = (x_min + x_max) // 2
-        
-        # Confidence from max probability in region
-        confidence = float(prob_map[mask].max())
-        
-        # Generate GPS coordinates (approximate)
-        base_lat, base_lon = 37.77, -122.42
-        lat = base_lat + (cy - h/2) * 0.0001
-        lon = base_lon + (cx - w/2) * 0.0001
-        
-        hotspots.append({
-            'id': len(hotspots) + 1,
-            'confidence': round(confidence * 100, 1),
-            'area_m2': int(area * 100),
-            'lat': round(float(lat), 4),
-            'lon': round(float(lon), 4),
-            'center_y': int(cy),
-            'center_x': int(cx),
-            'n_pixels': int(area),
-            'rank': len(hotspots) + 1,
-        })
-    
-    # Sort by confidence
-    hotspots.sort(key=lambda x: x['confidence'], reverse=True)
-    for i, h in enumerate(hotspots):
-        h['rank'] = i + 1
-    
-    return hotspots
 
 
 # =============================================================================
@@ -233,37 +337,30 @@ def extract_hotspots(prob_map: np.ndarray, threshold: float = 0.5, min_area: int
 # =============================================================================
 @app.on_event("startup")
 async def startup_event():
-    global model
     load_model()
 
 
 def load_model():
-    """Load the trained deep learning model."""
+    """Load the trained hotspot detector model."""
     global model
     
-    if not MODEL_AVAILABLE:
-        print("Warning: Model classes not available")
+    if not ML_AVAILABLE:
+        print("ML libraries not available - running in demo mode")
+        model = HotspotDetectorModel()
         return
     
-    if not MODEL_PATH.exists():
-        print(f"Model not found at {MODEL_PATH}")
-        return
-    
-    try:
-        model = ImprovedUNet(in_channels=IN_CHANNELS, num_classes=NUM_CLASSES)
-        checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(DEVICE)
-        model.eval()
-        print(f"✅ Model loaded from {MODEL_PATH}")
-        print(f"   Device: {DEVICE}")
-        print(f"   Epoch: {checkpoint.get('epoch', 'N/A')}")
-        print(f"   F1: {checkpoint.get('f1', 'N/A')}")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        import traceback
-        traceback.print_exc()
-        model = None
+    if MODEL_PATH.exists():
+        try:
+            with open(MODEL_PATH, 'r') as f:
+                model_dict = json.load(f)
+            model = HotspotDetectorModel.from_dict(model_dict)
+            print(f"Model loaded from {MODEL_PATH}")
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            model = HotspotDetectorModel()
+    else:
+        print(f"Model not found at {MODEL_PATH}, using defaults")
+        model = HotspotDetectorModel()
 
 
 # =============================================================================
@@ -272,10 +369,9 @@ def load_model():
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     return HealthResponse(
-        status="healthy" if model is not None else "degraded",
+        status="healthy",
         model_loaded=model is not None,
-        model_type="Deep Learning (Improved UNet)" if model is not None else "Not loaded",
-        device=DEVICE,
+        model_type="Hotspot Detector (Anomaly-Based)",
     )
 
 
@@ -284,11 +380,8 @@ async def predict(
     file: UploadFile = File(...),
     sensitivity: float = Query(0.5, ge=0.0, le=1.0)
 ):
-    """Predict marine debris hotspots from uploaded GeoTIFF using deep learning."""
+    """Predict marine debris hotspots from uploaded GeoTIFF."""
     start_time = datetime.now()
-    
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded")
     
     if not file.filename.endswith(('.tif', '.tiff')):
         raise HTTPException(status_code=400, detail="File must be a GeoTIFF (.tif)")
@@ -297,7 +390,7 @@ async def predict(
         if not ML_AVAILABLE:
             raise HTTPException(
                 status_code=500,
-                detail="ML libraries (rasterio) not available"
+                detail="ML libraries (rasterio) not available. Please install: pip install rasterio scipy"
             )
         
         contents = await file.read()
@@ -311,106 +404,20 @@ async def predict(
         
         print(f"Processing image: shape={image.shape}, range=[{image.min():.3f}, {image.max():.3f}]")
         
-        # IMPORTANT: improved_model.pth is now trained on REAL MARIDA data
-        # Use MARIDA normalization stats (matching train_marida.py)
-        marida_mean = np.array([0.05, 0.06, 0.06, 0.05, 0.08, 0.10, 0.11, 0.10, 0.12, 0.13, 0.09], dtype=np.float32)
-        marida_std = np.array([0.03, 0.03, 0.03, 0.03, 0.04, 0.05, 0.05, 0.05, 0.05, 0.06, 0.05], dtype=np.float32)
+        # Run detection
+        prob_map, hotspots = detect_hotspots(image, model, sensitivity=sensitivity)
         
-        # Scale if needed (MARIDA/Sentinel-2 data might be in DN or reflectance)
-        if image.max() > 10.0:
-            image = image / 10000.0  # DN to reflectance
-            print(f"Scaled from DN: new range=[{image.min():.3f}, {image.max():.3f}]")
-        elif image.max() > 1.0:
-            image = image / 1000.0
-            print(f"Scaled: new range=[{image.min():.3f}, {image.max():.3f}]")
-        
-        # Ensure we have 11 channels
-        if image.shape[0] < 11:
-            padding = np.zeros((11 - image.shape[0], *image.shape[1:]), dtype=image.dtype)
-            image = np.concatenate([image, padding], axis=0)
-        elif image.shape[0] > 11:
-            image = image[:11]
-        
-        # Normalize each band using MARIDA statistics (exactly as in train_marida.py)
-        for i in range(min(11, image.shape[0])):
-            if i < len(marida_mean) and i < len(marida_std):
-                image[i] = (image[i] - marida_mean[i]) / (marida_std[i] + 1e-8)
-        
-        # Clamp values to prevent extreme outliers (as in train_marida.py)
-        image = np.clip(image, -10.0, 10.0)
-        
-        print(f"After MARIDA normalization: range=[{image.min():.3f}, {image.max():.3f}], mean={image.mean():.3f}, std={image.std():.3f}")
-        
-        # Convert to tensor and add batch dimension
-        image_tensor = torch.from_numpy(image).unsqueeze(0).to(DEVICE)
-        
-        # Run inference
-        with torch.no_grad():
-            output = model(image_tensor)
-            probs = F.softmax(output, dim=1)
-            debris_probs = probs[0, 1].cpu().numpy()  # Get debris class probabilities
-        
-        print(f"Inference complete: prob range=[{debris_probs.min():.4f}, {debris_probs.max():.4f}]")
-        
-        # Adjust threshold based on sensitivity and actual probability range
-        max_prob = debris_probs.max()
-        mean_prob = debris_probs.mean()
-        median_prob = np.median(debris_probs)
-        
-        print(f"Probability stats: min={debris_probs.min():.4f}, max={max_prob:.4f}, mean={mean_prob:.4f}, median={median_prob:.4f}")
-        
-        # For very low probabilities, use percentile-based thresholding
-        # Always use top N% of pixels, regardless of absolute values
-        if max_prob < 0.01:
-            # Very low probabilities - use top 0.5-2% of pixels
-            percentile = 99.5 - (sensitivity * 1.5)  # Range: 98th to 99.5th percentile
-            threshold = np.percentile(debris_probs, percentile)
-            print(f"Very low probabilities detected - using {percentile:.1f}th percentile: {threshold:.6f}")
-        elif max_prob < 0.05:
-            # Low probabilities - use top 1-5% of pixels
-            percentile = 99 - (sensitivity * 4)  # Range: 95th to 99th percentile
-            threshold = np.percentile(debris_probs, percentile)
-            print(f"Low probabilities - using {percentile:.1f}th percentile: {threshold:.6f}")
-        else:
-            # Normal probabilities - use higher threshold to reduce false positives
-            # For high max_prob (>0.7), use even higher threshold
-            if max_prob > 0.7:
-                threshold = 0.65 + (0.8 - sensitivity) * 0.15  # Range: 0.65 to 0.8 (very conservative)
-            else:
-                threshold = 0.5 + (0.7 - sensitivity) * 0.2  # Range: 0.5 to 0.7 (more conservative)
-        
-        # Ensure threshold is reasonable
-        threshold = max(threshold, max_prob * 0.1)  # At least 10% of max
-        threshold = min(threshold, max_prob * 0.9)  # At most 90% of max
-        
-        print(f"Final threshold: {threshold:.6f} (max prob: {max_prob:.4f})")
-        
-        # Count pixels above threshold for debugging
-        pixels_above = (debris_probs >= threshold).sum()
-        print(f"Pixels above threshold: {pixels_above} ({100*pixels_above/debris_probs.size:.2f}%)")
-        
-        # Extract hotspots - use min_area to filter out tiny noise detections
-        # Higher min_area for high-probability cases to reduce over-segmentation
-        if max_prob > 0.7:
-            min_area = 10  # Require at least 10 pixels for high-confidence cases
-        else:
-            min_area = 5   # Require at least 5 pixels for lower-confidence cases
-        hotspots = extract_hotspots(debris_probs, threshold=threshold, min_area=min_area)
-        
-        print(f"Detection complete: {len(hotspots)} hotspots")
+        print(f"Detection complete: {len(hotspots)} hotspots, prob range=[{prob_map.min():.2f}, {prob_map.max():.2f}]")
         
         # Create heatmap
-        heatmap_base64 = create_heatmap_overlay(debris_probs)
+        heatmap_base64 = create_heatmap_overlay(prob_map)
         
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         
-        # Calculate confidence from max probability if no hotspots (shouldn't happen, but safety)
-        if hotspots:
-            avg_conf = float(np.mean([h['confidence'] for h in hotspots]))
-        else:
-            # Use max probability as confidence if no hotspots extracted (fallback)
-            avg_conf = float(max_prob * 100)
-            print(f"Warning: No hotspots extracted despite {pixels_above} pixels above threshold. Using max prob as confidence: {avg_conf:.1f}%")
+        avg_conf = float(np.mean([h['confidence'] for h in hotspots])) if hotspots else 0.0
+        
+        # Convert all numpy types to Python native types
+        hotspots = to_python_types(hotspots)
         
         return PredictionResult(
             success=True,
@@ -420,7 +427,7 @@ async def predict(
             preview_base64=preview_base64,
             heatmap_base64=heatmap_base64,
             hotspots=hotspots,
-            message=f"Detected {len(hotspots)} potential debris hotspots using deep learning model",
+            message=f"Detected {len(hotspots)} potential debris hotspots",
         )
         
     except Exception as e:
@@ -428,6 +435,133 @@ async def predict(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+
+@app.post("/predict-sample")
+async def predict_sample(
+    sample_id: int = Query(1, ge=1, le=5),
+    sensitivity: float = Query(0.5, ge=0.0, le=1.0)
+):
+    """Run prediction on a sample image from the dataset."""
+    start_time = datetime.now()
+    
+    # Sample paths - including ones WITH debris
+    sample_paths = {
+        1: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_1-12-19_48MYU" / "S2_1-12-19_48MYU_2.tif",  # Has debris
+        2: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_1-12-19_48MYU" / "S2_1-12-19_48MYU_3.tif",  # Has debris
+        3: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_11-1-19_19QDA" / "S2_11-1-19_19QDA_0.tif",
+        4: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_11-6-18_16PCC" / "S2_11-6-18_16PCC_0.tif",
+        5: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_12-1-17_16PCC" / "S2_12-1-17_16PCC_0.tif",
+    }
+    
+    sample_path = sample_paths.get(sample_id)
+    
+    if not sample_path or not sample_path.exists():
+        # Find any valid sample
+        patches_dir = PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches"
+        for folder in patches_dir.iterdir():
+            if folder.is_dir():
+                for tif in folder.glob("*.tif"):
+                    if "_cl" not in tif.name and "_conf" not in tif.name:
+                        sample_path = tif
+                        break
+                if sample_path and sample_path.exists():
+                    break
+    
+    if not sample_path or not sample_path.exists():
+        return PredictionResult(
+            success=False,
+            hotspots_count=0,
+            avg_confidence=0,
+            processing_time_ms=0,
+            message="Sample file not found",
+            hotspots=[],
+        )
+    
+    try:
+        with open(sample_path, 'rb') as f:
+            contents = f.read()
+        
+        preview_base64 = tif_to_preview_base64(contents)
+        
+        with rasterio.open(sample_path) as src:
+            image = src.read().astype(np.float32)
+        
+        print(f"Sample {sample_id}: {sample_path.name}, shape={image.shape}")
+        
+        prob_map, hotspots = detect_hotspots(image, model, sensitivity=sensitivity)
+        heatmap_base64 = create_heatmap_overlay(prob_map)
+        
+        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        avg_conf = float(np.mean([h['confidence'] for h in hotspots])) if hotspots else 0.0
+        
+        # Convert all numpy types to Python native types
+        hotspots = to_python_types(hotspots)
+        
+        return PredictionResult(
+            success=True,
+            hotspots_count=len(hotspots),
+            avg_confidence=round(avg_conf, 1),
+            processing_time_ms=round(processing_time, 1),
+            preview_base64=preview_base64,
+            heatmap_base64=heatmap_base64,
+            hotspots=hotspots,
+            message=f"Detected {len(hotspots)} potential debris hotspots",
+        )
+        
+    except Exception as e:
+        print(f"Sample prediction error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Sample prediction failed: {str(e)}")
+
+
+@app.get("/sample-preview/{sample_id}")
+async def get_sample_preview(sample_id: int):
+    """Get preview image for a sample."""
+    sample_paths = {
+        1: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_1-12-19_48MYU" / "S2_1-12-19_48MYU_2.tif",
+        2: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_1-12-19_48MYU" / "S2_1-12-19_48MYU_3.tif",
+        3: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_11-1-19_19QDA" / "S2_11-1-19_19QDA_0.tif",
+        4: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_11-6-18_16PCC" / "S2_11-6-18_16PCC_0.tif",
+        5: PRESIDENTIAL_AI_PATH / "data" / "marida" / "patches" / "S2_12-1-17_16PCC" / "S2_12-1-17_16PCC_0.tif",
+    }
+    
+    sample_path = sample_paths.get(sample_id)
+    
+    if not sample_path or not sample_path.exists():
+        return {"preview_base64": None, "error": "Sample not found"}
+    
+    try:
+        with open(sample_path, 'rb') as f:
+            contents = f.read()
+        
+        preview_base64 = tif_to_preview_base64(contents)
+        return {"preview_base64": preview_base64, "name": sample_path.stem}
+    except Exception as e:
+        return {"preview_base64": None, "error": str(e)}
+
+
+# =============================================================================
+# REPORT GENERATION ENDPOINT
+# =============================================================================
+from report_generator import generate_report
+
+
+class ReportRequest(BaseModel):
+    detection_data: dict
+
+
+@app.post("/report/generate")
+async def generate_debris_report(request: ReportRequest):
+    """Generate a marine debris report using Claude AI."""
+    
+    result = await generate_report(detection_data=request.detection_data)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Report generation failed"))
+    
+    return result
 
 
 if __name__ == "__main__":

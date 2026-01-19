@@ -4,6 +4,9 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import ReportGenerator from "@/components/ReportGenerator";
+import BeforeAfterSlider from "@/components/BeforeAfterSlider";
+import AnimatedCounter from "@/components/AnimatedCounter";
 
 type AnalysisState = "idle" | "uploading" | "processing" | "complete" | "error";
 
@@ -518,197 +521,165 @@ export default function AnalyzePage() {
                   </motion.div>
                 )}
 
-                {/* Success Banner */}
+                {/* AI Report - Now First and Auto-generated */}
                 <motion.div
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="mb-8 p-4 glass rounded-xl flex items-center justify-between"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="mb-8"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    <span className="text-white font-medium">
-                      Analysis complete in {result.processingTime.toFixed(2)}s
-                    </span>
-                  </div>
-                  <button onClick={resetAnalysis} className="text-cyan-400 hover:text-cyan-300 transition-colors">
-                    ANALYZE ANOTHER →
-                  </button>
+                  <ReportGenerator
+                    detectionData={{
+                      hotspots_count: result.hotspots,
+                      avg_confidence: result.confidence / 100,
+                      processing_time_ms: result.processingTime * 1000,
+                      hotspots: result.hotspotsList || [],
+                    }}
+                    autoGenerate={true}
+                  />
                 </motion.div>
 
-                {/* Image Grid */}
-                <div className="grid lg:grid-cols-2 gap-6 mb-8">
-                  {/* Input Image */}
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.1 }}
-                    className="glass rounded-2xl overflow-hidden"
-                  >
-                    <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-                      <div>
-                        <h3 className="font-semibold text-white">INPUT IMAGE</h3>
-                        <p className="text-xs text-white/40 font-mono">
-                          {useSample ? samples.find(s => s.id === selectedSampleId)?.name : selectedFile?.name}
-                        </p>
-                      </div>
-                      <span className="px-2 py-1 bg-white/5 rounded text-xs text-white/60">RAW</span>
-                    </div>
-                    <div className="aspect-square bg-black/50 flex items-center justify-center p-4">
-                      {getPreviewImage() ? (
-                        <Image
-                          src={getPreviewImage()!}
-                          alt="Input"
-                          width={512}
-                          height={512}
-                          className="max-w-full max-h-full object-contain rounded-lg"
-                        />
-                      ) : (
-                        <span className="text-white/30">No preview</span>
-                      )}
-                    </div>
-                  </motion.div>
+                {/* Visual Results Section */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="mb-8"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <span className="w-2 h-2 bg-cyan-400 rounded-full" />
+                      Detection Visualization
+                    </h2>
+                    <button onClick={resetAnalysis} className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+                      Analyze Another →
+                    </button>
+                  </div>
 
-                  {/* Detection Result */}
-                  <motion.div
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="glass rounded-2xl overflow-hidden"
-                  >
-                    <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-                      <div>
-                        <h3 className="font-semibold text-white">DETECTION RESULT</h3>
-                        <p className="text-xs text-white/40">Debris probability heatmap</p>
-                      </div>
-                      <span className="px-2 py-1 bg-cyan-500/20 rounded text-xs text-cyan-400">PROCESSED</span>
+                  {/* Before/After Comparison Slider */}
+                  {getPreviewImage() && result.heatmapBase64 ? (
+                    <div className="max-w-2xl mx-auto">
+                      <BeforeAfterSlider
+                        beforeImage={getPreviewImage()!}
+                        afterImage={`data:image/png;base64,${result.heatmapBase64}`}
+                        beforeLabel="ORIGINAL"
+                        afterLabel="AI DETECTION"
+                      />
                     </div>
-                    <div className="aspect-square bg-black/50 flex items-center justify-center p-4 relative">
-                      {result.heatmapBase64 ? (
-                        <Image
-                          src={`data:image/png;base64,${result.heatmapBase64}`}
-                          alt="Heatmap"
-                          width={512}
-                          height={512}
-                          className="max-w-full max-h-full object-contain rounded-lg"
-                        />
-                      ) : (
-                        <div className="text-center">
-                          <div className="text-6xl mb-4">🎯</div>
-                          <p className="text-white/50">{result.hotspots} Hotspots Detected</p>
+                  ) : (
+                    <div className="grid lg:grid-cols-2 gap-4">
+                      {/* Fallback: Input Image */}
+                      <div className="relative group rounded-xl overflow-hidden bg-black/40 border border-white/10">
+                        <div className="absolute top-3 left-3 z-10 px-2 py-1 bg-black/60 backdrop-blur rounded text-xs text-white/70">
+                          INPUT
                         </div>
-                      )}
-                    </div>
-                  </motion.div>
-                </div>
-
-                {/* Stats Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                  {[
-                    { label: "HOTSPOTS", value: result.hotspots, color: "cyan" },
-                    { label: "CONFIDENCE", value: `${result.confidence}%`, color: "green" },
-                    { label: "PROCESS TIME", value: `${result.processingTime.toFixed(2)}s`, color: "blue" },
-                    { label: "MODEL", value: "SegFormer", color: "indigo" },
-                  ].map((stat, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.3 + i * 0.1 }}
-                      className="stat-card text-center"
-                    >
-                      <div className={`text-3xl font-bold font-mono text-${stat.color}-400 mb-1`}>
-                        {stat.value}
+                        <div className="aspect-square flex items-center justify-center p-4">
+                          {getPreviewImage() ? (
+                            <Image
+                              src={getPreviewImage()!}
+                              alt="Input"
+                              width={512}
+                              height={512}
+                              className="max-w-full max-h-full object-contain rounded-lg"
+                            />
+                          ) : (
+                            <span className="text-white/30">No preview</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-xs text-white/40 tracking-widest">{stat.label}</div>
-                    </motion.div>
-                  ))}
-                </div>
 
-                {/* Hotspots Table */}
+                      {/* Fallback: Detection Result */}
+                      <div className="relative group rounded-xl overflow-hidden bg-black/40 border border-cyan-500/30">
+                        <div className="absolute top-3 left-3 z-10 px-2 py-1 bg-cyan-500/20 backdrop-blur rounded text-xs text-cyan-400 font-medium">
+                          DETECTION
+                        </div>
+                        <div className="aspect-square flex items-center justify-center p-4 relative">
+                          {result.heatmapBase64 ? (
+                            <Image
+                              src={`data:image/png;base64,${result.heatmapBase64}`}
+                              alt="Heatmap"
+                              width={512}
+                              height={512}
+                              className="max-w-full max-h-full object-contain rounded-lg"
+                            />
+                          ) : (
+                            <div className="text-center">
+                              <div className="text-6xl mb-4">🎯</div>
+                              <p className="text-white/50">{result.hotspots} Hotspots Detected</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+
+                {/* Hotspots List - Compact */}
                 {result.hotspotsList && result.hotspotsList.length > 0 && (
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5 }}
-                    className="glass rounded-2xl overflow-hidden"
+                    transition={{ delay: 0.4 }}
+                    className="mb-8"
                   >
-                    <div className="px-6 py-4 border-b border-white/5">
-                      <h3 className="font-semibold text-white">DETECTED HOTSPOTS</h3>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b border-white/5 text-xs text-white/40 tracking-widest">
-                            <th className="text-left py-3 px-6">RANK</th>
-                            <th className="text-left py-3 px-6">CONFIDENCE</th>
-                            <th className="text-left py-3 px-6">AREA</th>
-                            <th className="text-left py-3 px-6">COORDINATES</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {result.hotspotsList.map((hotspot, i) => (
-                            <motion.tr
-                              key={hotspot.id}
-                              initial={{ opacity: 0, x: -20 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              transition={{ delay: 0.6 + i * 0.05 }}
-                              className="border-b border-white/5 hover:bg-white/5 transition-colors"
-                            >
-                              <td className="py-4 px-6 font-mono text-white">#{i + 1}</td>
-                              <td className="py-4 px-6">
-                                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                                  hotspot.confidence >= 90 
-                                    ? "bg-red-500/20 text-red-400" 
-                                    : hotspot.confidence >= 80 
-                                      ? "bg-amber-500/20 text-amber-400" 
-                                      : "bg-green-500/20 text-green-400"
-                                }`}>
-                                  {hotspot.confidence}%
-                                </span>
-                              </td>
-                              <td className="py-4 px-6 text-white/60 font-mono">
-                                {hotspot.area_m2.toLocaleString()} m²
-                              </td>
-                              <td className="py-4 px-6 text-white/40 font-mono text-sm">
-                                {hotspot.lat.toFixed(4)}°N, {hotspot.lon.toFixed(4)}°W
-                              </td>
-                            </motion.tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <span className="w-2 h-2 bg-cyan-400 rounded-full" />
+                      Hotspot Details
+                    </h2>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {result.hotspotsList.slice(0, 6).map((hotspot, i) => (
+                        <motion.div
+                          key={hotspot.id}
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.5 + i * 0.05 }}
+                          className="p-4 bg-white/5 rounded-xl border border-white/10 hover:border-cyan-500/30 transition-all hover:bg-white/10"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-white/40 text-sm font-mono">#{i + 1}</span>
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              hotspot.confidence >= 90 
+                                ? "bg-red-500/20 text-red-400" 
+                                : hotspot.confidence >= 80 
+                                  ? "bg-amber-500/20 text-amber-400" 
+                                  : "bg-green-500/20 text-green-400"
+                            }`}>
+                              <AnimatedCounter value={hotspot.confidence} duration={1000 + i * 200} suffix="%" />
+                            </span>
+                          </div>
+                          <div className="text-xl font-bold text-white font-mono">
+                            <AnimatedCounter value={hotspot.area_m2} duration={1500 + i * 100} /> m²
+                          </div>
+                          <div className="text-xs text-white/40 font-mono mt-1">
+                            {hotspot.lat.toFixed(4)}°, {hotspot.lon.toFixed(4)}°
+                          </div>
+                        </motion.div>
+                      ))}
                     </div>
                   </motion.div>
                 )}
 
-                {/* Export Options */}
+                {/* Export Options - Minimal */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.7 }}
-                  className="mt-8 glass rounded-2xl p-6"
+                  transition={{ delay: 0.6 }}
+                  className="flex flex-wrap gap-3 justify-center"
                 >
-                  <h3 className="font-semibold text-white mb-4">EXPORT RESULTS</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {[
-                      { label: "GeoTIFF", icon: "🗺️", desc: "Heatmap" },
-                      { label: "GeoJSON", icon: "📍", desc: "Vectors" },
-                      { label: "CSV", icon: "📋", desc: "Data" },
-                      { label: "PDF", icon: "📄", desc: "Report" },
-                    ].map((opt, i) => (
-                      <button
-                        key={i}
-                        className="p-4 bg-white/5 rounded-xl text-left hover:bg-white/10 transition-colors group"
-                      >
-                        <span className="text-2xl block mb-2">{opt.icon}</span>
-                        <p className="font-medium text-white group-hover:text-cyan-400 transition-colors">{opt.label}</p>
-                        <p className="text-xs text-white/40">{opt.desc}</p>
-                      </button>
-                    ))}
-                  </div>
+                  {[
+                    { label: "GeoTIFF", icon: "🗺️" },
+                    { label: "GeoJSON", icon: "📍" },
+                    { label: "CSV", icon: "📋" },
+                    { label: "PDF", icon: "📄" },
+                  ].map((opt, i) => (
+                    <button
+                      key={i}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2 text-white/70 hover:text-white"
+                    >
+                      <span>{opt.icon}</span>
+                      <span className="text-sm">{opt.label}</span>
+                    </button>
+                  ))}
                 </motion.div>
               </motion.div>
             )}
