@@ -16,6 +16,9 @@ venv/
 .venv/
 env/
 
+# Config files with secrets
+backend/config.py
+
 # IDE
 .idea/
 .vscode/
