@@ -1,0 +1,9 @@
+backend/
+PresidentialAI/
+*.log
+*.md
+__pycache__/
+node_modules/
+*.pyc
+.env.local
+.DS_Store

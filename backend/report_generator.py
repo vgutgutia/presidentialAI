@@ -5,7 +5,13 @@ Returns structured data for beautiful visual reports
 
 import os
 import json
-import anthropic
+
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    anthropic = None
 
 # Try to load API key from config file first, then environment variable
 try:
@@ -81,6 +87,12 @@ Return ONLY valid JSON (no markdown, no explanation) in this exact format:
 
 def generate_report_sync(detection_data: dict) -> dict:
     """Generate a marine debris report using Claude."""
+    if not ANTHROPIC_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Anthropic package not installed. Install with: pip install anthropic",
+        }
+    
     if not ANTHROPIC_API_KEY:
         return {
             "success": False,

@@ -246,7 +246,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://*.vercel.app",  # Allow all Vercel deployments
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -545,7 +549,12 @@ async def get_sample_preview(sample_id: int):
 # =============================================================================
 # REPORT GENERATION ENDPOINT
 # =============================================================================
-from report_generator import generate_report
+try:
+    from report_generator import generate_report
+    REPORT_GENERATOR_AVAILABLE = True
+except ImportError:
+    REPORT_GENERATOR_AVAILABLE = False
+    print("Warning: report_generator not available (anthropic module missing)")
 
 
 class ReportRequest(BaseModel):
@@ -555,6 +564,12 @@ class ReportRequest(BaseModel):
 @app.post("/report/generate")
 async def generate_debris_report(request: ReportRequest):
     """Generate a marine debris report using Claude AI."""
+    
+    if not REPORT_GENERATOR_AVAILABLE:
+        raise HTTPException(
+            status_code=503, 
+            detail="Report generation not available. Install anthropic package: pip install anthropic"
+        )
     
     result = await generate_report(detection_data=request.detection_data)
     
@@ -566,4 +581,6 @@ async def generate_debris_report(request: ReportRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
